@@ -25,3 +25,6 @@ migrate:
 
 create_migrate:
 	sqlx migrate add -r init
+
+restart postgres:
+	sudo systemctl restart postgresql
