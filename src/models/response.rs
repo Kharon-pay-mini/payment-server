@@ -8,7 +8,7 @@ use super::models::{CryptoType, OrderType, PaymentMethod, PaymentStatus};
 pub struct FilteredUser {
     pub id: String,
     pub email: String,
-    pub phone: String,
+    pub phone: Option<String>,
     pub verified: bool,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,

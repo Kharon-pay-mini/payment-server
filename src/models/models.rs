@@ -7,7 +7,7 @@ pub struct User {
     pub id: uuid::Uuid,
     pub email: String,
     pub password: String,
-    pub phone: String,
+    pub phone: Option<String>,
     pub verified: bool,
     #[serde(rename = "createdAt")]
     pub created_at: Option<DateTime<Utc>>,
