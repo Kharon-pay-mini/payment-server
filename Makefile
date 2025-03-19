@@ -8,11 +8,14 @@ install:
 	cargo add env_logger
 	cargo add dotenv
 	cargo add uuid --features "serde v4"
-	cargo add sqlx --features "runtime-async-std-native-tls postgres chrono uuid"
+	cargo add sqlx --features "runtime-async-std-native-tls postgres chrono uuid rust_decimal"
 	cargo add jsonwebtoken
 	cargo add argon2
 	cargo add rand_core --features "std"
+	cargo add rand
+	cargo add rust_decimal --features "db-postgres"
 	cargo install cargo-watch
+
 
 run: 
 	cargo r -r 

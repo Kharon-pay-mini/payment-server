@@ -1,0 +1,394 @@
+use actix_web::{
+    body,
+    cookie::{time::Duration as ActixWebDuration, Cookie},
+    post, web, HttpResponse, Responder,
+};
+use chrono::Utc;
+use rand::{rng, Rng};
+use sqlx::Row;
+use std::{error, time::Duration};
+
+use crate::{
+    models::{
+        models::{
+            CreateUserSchema, Otp, OtpSchema, TransactionSchema, Transactions, User,
+            UserSecurityLogs, UserSecurityLogsSchema, UserWallet, UserWalletSchema,
+        },
+        response::{
+            FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
+            FilteredWallet, WalletData,
+        },
+    },
+    AppState,
+};
+
+fn filtered_user_record(user: &User) -> FilteredUser {
+    FilteredUser {
+        id: user.id.to_string(),
+        email: user.email.to_string(),
+        phone: user.phone.clone(),
+        last_logged_in: user.last_logged_in.unwrap_or_else(|| Utc::now()),
+        verified: user.verified,
+        role: user.role,
+        created_at: user.created_at.unwrap_or_else(|| Utc::now()),
+        updated_at: user.updated_at.unwrap_or_else(|| Utc::now()),
+    }
+}
+
+fn filtered_wallet_record(wallet: &UserWallet) -> FilteredWallet {
+    FilteredWallet {
+        id: wallet.id.to_string(),
+        user_id: wallet.user_id.to_string(),
+        wallet_address: wallet
+            .wallet_address
+            .as_ref()
+            .map_or("Unknown".to_string(), |s| s.to_string()),
+        network_used_last: wallet
+            .network_used_last
+            .as_ref()
+            .map_or("Unknown".to_string(), |s| s.to_string()),
+        created_at: wallet.created_at.unwrap_or_else(|| Utc::now()),
+        updated_at: wallet.updated_at.unwrap_or_else(|| Utc::now()),
+    }
+}
+
+fn filtered_transaction_record(user: &User, transaction: &Transactions) -> FilteredTransaction {
+    FilteredTransaction {
+        tx_id: transaction.tx_id.to_string(),
+        user_id: user.id.to_string(),
+        order_type: transaction.order_type.clone(),
+        crypto_amount: transaction.crypto_amount,
+        crypto_type: transaction.crypto_type.clone(),
+        fiat_amount: transaction.fiat_amount,
+        fiat_currency: transaction.fiat_currency.to_string(),
+        payment_method: transaction.payment_method.clone(),
+        payment_status: transaction.payment_status.clone(),
+        t_hash: transaction.tx_hash.to_string(),
+        created_at: transaction.created_at.unwrap_or_else(|| Utc::now()),
+        updated_at: transaction.updated_at.unwrap_or_else(|| Utc::now()),
+    }
+}
+
+fn filtered_security_logs(
+    user: &User,
+    security_log: &UserSecurityLogs,
+) -> FilteredUserSecurityLogs {
+    FilteredUserSecurityLogs {
+        log_id: security_log.log_id.to_string(),
+        user_id: user.id.to_string(),
+        ip_address: security_log.ip_address.to_string(),
+        city: security_log.city.to_string(),
+        country: security_log.country.to_string(),
+        failed_login_attempts: security_log.failed_login_attempts,
+        flagged_for_review: security_log.flagged_for_review,
+        created_at: security_log.created_at.unwrap_or_else(|| Utc::now()),
+    }
+}
+
+fn filtered_otp(user: &User, otp: &Otp) -> FilteredOtp {
+    FilteredOtp {
+        otp_id: otp.otp_id.to_string(),
+        user_id: user.id.to_string(),
+        otp: otp.otp,
+        created_at: otp.created_at.unwrap_or_else(|| Utc::now()),
+        expires_at: otp.expires_at.unwrap(),
+    }
+}
+
+#[post("/auth/create")]
+async fn create_user_handler(
+    body: web::Json<CreateUserSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let email = body.email.to_string().to_lowercase();
+    let phone = body.phone.as_ref().map(|s| s.to_string());
+    let role = body.role.to_string();
+
+    let exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+        .bind(&email)
+        .fetch_one(&data.db)
+        .await
+        .unwrap()
+        .get(0);
+
+    if exists {
+        let mut query = "UPDATE users SET last_logged_in = NOW() WHERE email = $1".to_string();
+        let mut params = vec![email.clone()];
+
+        if let Some(phone) = &phone {
+            query.push_str(" AND phone = $2");
+            params.push(phone.to_string());
+        }
+
+        query.push_str(" RETURNING *");
+
+        let query_result = sqlx::query_as::<_, User>(&query)
+            .bind(&email)
+            .bind(phone.as_ref().map(|s| s.as_str()))
+            .fetch_one(&data.db)
+            .await;
+
+        match query_result {
+            Ok(user) => {
+                let user_response = serde_json::json!({"status": "success", "data": serde_json::json!({
+                    "user": filtered_user_record(&user)
+                })});
+
+                return HttpResponse::Ok().json(user_response);
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        }
+    } else {
+        let mut query = "INSERT INTO users (email, role, last_logged_in".to_string();
+        let mut values = "VALUES ($1, $2, $3, now()".to_string();
+        let mut params = vec![email.clone(), role.clone()];
+
+        if let Some(phone) = &phone {
+            query.push_str(", phone");
+            values.push_str(", $4");
+            params.push(phone.to_string());
+        }
+        query.push_str(") ");
+        values.push_str(") RETURNING *");
+        query.push_str(&values);
+
+        let query_result = sqlx::query_as::<_, User>(&query)
+            .bind(&email)
+            .bind(&role)
+            .bind(phone.as_ref().map(|s| s.as_str()))
+            .fetch_one(&data.db)
+            .await;
+
+        match query_result {
+            Ok(user) => {
+                let user_response = serde_json::json!({"status": "success", "data": serde_json::json!({
+                    "user": filtered_user_record(&user)
+                })});
+
+                return HttpResponse::Ok().json(user_response);
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        }
+    }
+}
+
+#[post("/user/wallet")]
+async fn update_user_wallet_handler(
+    body: web::Json<UserWalletSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let user_id = body.user_id;
+    let wallet_address = body.wallet_address.to_string();
+    let network = body.network.to_string();
+
+    let wallet = sqlx::query_as::<_, UserWallet>(
+        "INSERT INTO user_wallet (user_id, wallet_address, network_used_last)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO UPDATE
+            SET wallet_address = EXCLUDED.wallet_address,
+            network_last_used = EXCLUDED.network_last_used,
+            updated_at = NOW() 
+            RETURNING *",
+    )
+    .bind(user_id)
+    .bind(wallet_address)
+    .bind(network)
+    .fetch_one(&data.db)
+    .await;
+
+    match wallet {
+        Ok(wallet) => {
+            let filtered_wallet = filtered_wallet_record(&wallet);
+            return HttpResponse::Created().json(filtered_wallet);
+        }
+        Err(e) => {
+            eprint!("Database error: {}", e);
+            HttpResponse::InternalServerError().body("Database error")
+        }
+    }
+}
+
+#[post("/{id}/{tx_hash}")]
+async fn update_transaction_handler(
+    body: web::Json<TransactionSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let user_id = body.user_id;
+    let order_type = body.order_type.to_string();
+    let crypto_amount = body.crypto_amount.to_string();
+    let crypto_type = body.crypto_type.to_string();
+    let fiat_amount = body.fiat_amount.to_string();
+    let fiat_currency = body.fiat_currency.to_string();
+    let payment_method = body.payment_method.to_string();
+    let payment_status = body.payment_status.to_string();
+    let tx_hash = body.tx_hash.to_string();
+
+    let transaction = sqlx::query_as::<_, Transactions>(
+        r#"
+        INSERT INTO transactions (
+            user_id, order_type, crypto_amount, crypto_type,
+            fiat_amount, fiat_currency, payment_method, payment_status,
+            tx_hash
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (user_id, tx_hash) DO NOTHING
+        RETURNING *
+    "#,
+    )
+    .bind(user_id)
+    .bind(order_type)
+    .bind(crypto_amount)
+    .bind(crypto_type)
+    .bind(fiat_amount)
+    .bind(fiat_currency)
+    .bind(payment_method)
+    .bind(payment_status)
+    .bind(tx_hash)
+    .fetch_optional(&data.db)
+    .await;
+
+    match transaction {
+        Ok(Some(transaction)) => {
+            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+                .bind(transaction.user_id)
+                .fetch_one(&data.db)
+                .await;
+
+            match user {
+                Ok(user) => {
+                    let filtered_transaction = filtered_transaction_record(&user, &transaction);
+                    HttpResponse::Ok().json(filtered_transaction)
+                }
+                Err(e) => {
+                    eprint!("Error fetching user: {}", e);
+                    HttpResponse::InternalServerError().json("User data retrieval failed!")
+                }
+            }
+        }
+        Ok(None) => HttpResponse::Conflict().json("Transaction already exists"),
+        Err(e) => {
+            eprint!("Database error: {}", e);
+            return HttpResponse::InternalServerError().json("Database error");
+        }
+    }
+}
+
+#[post("/user/{id}/logs")]
+async fn update_user_logs_handler(
+    body: web::Json<UserSecurityLogsSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let user_id = body.user_id;
+    let ip_address = body.ip_address.to_string();
+    let city = body.city.to_string();
+    let country = body.country.to_string();
+    let failed_login_attempts = body.failed_login_attempts;
+    let flagged_for_review = body.flagged_for_review;
+
+    let security_log = sqlx::query_as::<_, UserSecurityLogs>(
+        r#"
+        INSERT INTO user_security_logs (
+            user_id, ip_address, city, country,
+            failed_login_attempts, flagged_for_review
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+        "#,
+    )
+    .bind(user_id)
+    .bind(ip_address)
+    .bind(city)
+    .bind(country)
+    .bind(failed_login_attempts)
+    .bind(flagged_for_review)
+    .fetch_optional(&data.db)
+    .await;
+
+    match security_log {
+        Ok(Some(security_log)) => {
+            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+                .bind(security_log.user_id)
+                .fetch_one(&data.db)
+                .await;
+
+            match user {
+                Ok(user) => {
+                    let filtered_security_logs = filtered_security_logs(&user, &security_log);
+                    HttpResponse::Ok().json(filtered_security_logs)
+                }
+                Err(e) => {
+                    eprint!("Error fetching user: {}", e);
+                    HttpResponse::InternalServerError().json("User data retrieval failed!")
+                }
+            }
+        }
+        Ok(None) => {
+            HttpResponse::Conflict().json("Security log already exists or no changes detected")
+        }
+        Err(e) => {
+            eprint!("Database error: {}", e);
+            return HttpResponse::InternalServerError().json("Database error");
+        }
+    }
+}
+
+#[post("/user/{id}/otp")]
+async fn update_otp_handler(
+    body: web::Json<OtpSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let user_id = body.user_id;
+
+    let otp = rng().random_range(100_000..=999_999).to_string();
+
+    let expiry = Utc::now() + Duration::from_secs(15 * 60);
+
+    let otp = sqlx::query_as::<_, Otp>(
+        r#"
+        INSERT INTO otp (user_id, otp, expires_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id) DO UPDATE 
+        SET otp = $2,
+            created_at = NOW(),
+            expires_at = $3,
+        RETURNING user_id, otp, created_at, expires_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(otp)
+    .bind(expiry)
+    .fetch_one(&data.db)
+    .await;
+
+    match otp {
+        Ok(otp) => {
+            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+                .bind(otp.user_id)
+                .fetch_one(&data.db)
+                .await;
+
+            match user {
+                Ok(user) => {
+                    let filtered_otp = filtered_otp(&user, &otp);
+                    HttpResponse::Ok().json(filtered_otp)
+                }
+                Err(e) => {
+                    eprint!("Error fetching user: {}", e);
+                    HttpResponse::InternalServerError().json("User data retrieval failed!")
+                }
+            }
+        }
+        Err(e) => {
+            eprint!("Database error: {}", e);
+            return HttpResponse::InternalServerError().json("Database error");
+        }
+    }
+}
+
+
