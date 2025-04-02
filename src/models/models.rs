@@ -131,6 +131,12 @@ pub struct OtpSchema {
     pub user_id: uuid::Uuid,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ValidateOtpSchema {
+    pub user_id: uuid::Uuid,
+    pub otp: i32
+}
+
 // /*  DISPLAY IMPLEMENTATION FOR ENUMS */
 macro_rules! impl_display {
     ($($t:ty), *) => {

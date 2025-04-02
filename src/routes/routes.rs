@@ -4,15 +4,18 @@ use actix_web::{
     post, web, HttpResponse, Responder,
 };
 use chrono::Utc;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand::{rng, Rng};
+use serde_json::json;
 use sqlx::Row;
-use std::{error, time::Duration};
+use std::{error, time::Duration, usize};
 
 use crate::{
     models::{
         models::{
-            CreateUserSchema, Otp, OtpSchema, TransactionSchema, Transactions, User,
+            CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
             UserSecurityLogs, UserSecurityLogsSchema, UserWallet, UserWalletSchema,
+            ValidateOtpSchema,
         },
         response::{
             FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
@@ -338,8 +341,8 @@ async fn update_user_logs_handler(
     }
 }
 
-#[post("/user/{id}/otp")]
-async fn update_otp_handler(
+#[post("/user/request-otp")]
+async fn request_otp_handler(
     body: web::Json<OtpSchema>,
     data: web::Data<AppState>,
 ) -> impl Responder {
@@ -375,6 +378,7 @@ async fn update_otp_handler(
 
             match user {
                 Ok(user) => {
+                    //send otp via email
                     let filtered_otp = filtered_otp(&user, &otp);
                     HttpResponse::Ok().json(filtered_otp)
                 }
@@ -391,4 +395,78 @@ async fn update_otp_handler(
     }
 }
 
+#[post("/user/validate-otp")]
+async fn validate_otp(
+    body: web::Json<ValidateOtpSchema>,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    let user_id = body.user_id;
+    let otp = body.otp;
 
+    let stored_otp = sqlx::query_as::<_, Otp>("SELECT otp, expires_at FROM otp WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(&data.db)
+        .await;
+
+    match stored_otp {
+        Ok(Some(otp_record)) => {
+            if let Some(expiry) = otp_record.expires_at {
+                if expiry < Utc::now() {
+                    if let Err(e) = sqlx::query("DELETE FROM otp WHERE expires_at < NOW()")
+                        .execute(&data.db)
+                        .await
+                    {
+                        eprint!("Failed to clean expired OTPs: {}", e);
+                    }
+
+                    return HttpResponse::Unauthorized().json("OTP has expired.");
+                }
+            } else {
+                HttpResponse::Unauthorized().json("OTP expiry time is missing.");
+            }
+            if otp_record.otp != otp {
+                return HttpResponse::Unauthorized().json("Invalid otp");
+            }
+
+            if let Err(e) = sqlx::query("DELETE FROM otp WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&data.db)
+            .await
+            {
+                eprint!("Failed to delete used OTP: {}", e);
+                return HttpResponse::InternalServerError().json("Failed to clean up OTP");
+            }
+
+            let now = Utc::now();
+            let iat = now.timestamp() as usize;
+            let exp = (now + Duration::from_secs(15 * 60)).timestamp() as usize;
+            let claims: TokenClaims = TokenClaims {
+                sub: user_id.to_string(),
+                iat,
+                exp,
+            };
+
+            let token = encode(
+                &Header::default(),
+                &claims,
+                &EncodingKey::from_secret(data.env.jwt_secret.as_ref()),
+            )
+            .unwrap();
+
+            let cookie = Cookie::build("token", token.to_owned())
+                .path("/")
+                .max_age(ActixWebDuration::new(24 * 60 * 60, 0)) //24h
+                .http_only(true)
+                .finish();
+
+            HttpResponse::Ok()
+                .cookie(cookie)
+                .json(json!({"status": "success", "token": token}))
+        }
+        Ok(None) => HttpResponse::Unauthorized().json("No OTP found"),
+        Err(e) => {
+            eprint!("Database error: {}", e);
+            HttpResponse::InternalServerError().json("Database error.")
+        }
+    }
+}
