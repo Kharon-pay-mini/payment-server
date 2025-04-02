@@ -2,8 +2,6 @@ use chrono::prelude::*;
 use rust_decimal::Decimal;
 use serde::Serialize;
 
-use super::models::Role;
-
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize)]
 pub struct FilteredUser {
@@ -12,7 +10,7 @@ pub struct FilteredUser {
     pub phone: Option<String>,
     pub last_logged_in: DateTime<Utc>,
     pub verified: bool,
-    pub role: Role,
+    pub role: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
     #[serde(rename = "updatedAt")]

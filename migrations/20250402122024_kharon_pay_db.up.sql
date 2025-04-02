@@ -1,7 +1,8 @@
 -- Add up migration script here
+-- Add up migration script here
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-DROP TYPE IF EXISTS role CASCADE;
+-- DROP TYPE IF EXISTS role CASCADE;
 -- DROP TYPE IF EXISTS order_type CASCADE;
 -- DROP TYPE IF EXISTS crypto_type CASCADE;
 -- DROP TYPE IF EXISTS payment_method CASCADE;
@@ -18,9 +19,8 @@ CREATE TABLE "users" (
     email VARCHAR(255) NOT NULL UNIQUE,
     phone VARCHAR(20) UNIQUE,
     last_logged_in TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    photo VARCHAR(50) NOT NULL DEFAULT 'default.png',
     verified BOOLEAN NOT NULL DEFAULT FALSE,
-    role role NOT NULL DEFAULT 'user',
+    role VARCHAR(10) NOT NULL DEFAULT 'user',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -40,12 +40,12 @@ CREATE TABLE "transactions" (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     order_type VARCHAR(10) NOT NULL,
     crypto_amount DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-    crypto_type VARCHAR(10),
+    crypto_type VARCHAR(10) NOT NULL,
     fiat_amount DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-    fiat_currency VARCHAR(20),
-    payment_method VARCHAR(20),
-    payment_status VARCHAR(20),
-    tx_hash VARCHAR(250) UNIQUE,
+    fiat_currency VARCHAR(20) NOT NULL,
+    payment_method VARCHAR(20) NOT NULL,
+    payment_status VARCHAR(20) NOT NULL,
+    tx_hash VARCHAR(250) UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -53,9 +53,9 @@ CREATE TABLE "transactions" (
 CREATE TABLE "user_security_logs" (
     log_id UUID PRIMARY KEY DEFAULT (uuid_generate_v4()),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ip_address VARCHAR(50),
-    city VARCHAR(50),
-    country VARCHAR(50),
+    ip_address VARCHAR(50) NOT NULL,
+    city VARCHAR(50) NOT NULL,
+    country VARCHAR(50) NOT NULL,
     failed_login_attempts INT NOT NULL DEFAULT 0,
     flagged_for_review BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
