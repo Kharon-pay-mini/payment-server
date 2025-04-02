@@ -1,7 +1,10 @@
 use actix_web::{
     body,
-    cookie::{time::Duration as ActixWebDuration, Cookie},
-    post, web, HttpResponse, Responder,
+    cookie::{
+        time::{ext, Duration as ActixWebDuration},
+        Cookie,
+    },
+    get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -11,6 +14,7 @@ use sqlx::Row;
 use std::{error, time::Duration, usize};
 
 use crate::{
+    auth::jwt_auth,
     models::{
         models::{
             CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
@@ -31,8 +35,9 @@ fn filtered_user_record(user: &User) -> FilteredUser {
         email: user.email.to_string(),
         phone: user.phone.clone(),
         last_logged_in: user.last_logged_in.unwrap_or_else(|| Utc::now()),
+        photo: user.photo.clone(),
         verified: user.verified,
-        role: user.role,
+        role: user.role.clone(),
         created_at: user.created_at.unwrap_or_else(|| Utc::now()),
         updated_at: user.updated_at.unwrap_or_else(|| Utc::now()),
     }
@@ -429,9 +434,9 @@ async fn validate_otp(
             }
 
             if let Err(e) = sqlx::query("DELETE FROM otp WHERE user_id = $1")
-            .bind(user_id)
-            .execute(&data.db)
-            .await
+                .bind(user_id)
+                .execute(&data.db)
+                .await
             {
                 eprint!("Failed to delete used OTP: {}", e);
                 return HttpResponse::InternalServerError().json("Failed to clean up OTP");
@@ -470,3 +475,45 @@ async fn validate_otp(
         }
     }
 }
+
+#[get("/users/{id}")]
+async fn get_user_handler(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let ext = req.extensions();
+    let user_id = ext.get::<uuid::Uuid>().unwrap();
+    let user = match sqlx::query_as!(User, "SELECT id, email, phone, last_logged_in, verified,role, created_at, updated_at FROM users WHERE id = $1", user_id)
+        .fetch_one(&data.db)
+        .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                eprint!("Error fetching user: {}", e);
+                return HttpResponse::InternalServerError().json("Error fetching user");
+            }
+        };
+
+    let json_response = serde_json::json!({
+        "status": "success",
+        "data": serde_json::json!({
+            "user": filtered_user_record(&user)
+        })
+    });
+
+    HttpResponse::Ok().json(json_response)
+}
+
+
+#[get("/user/{id}/transaction")]
+async fn get_transaction_handler() -> impl Responder {}
+
+#[get("/user/{id}/logs")]
+async fn get_user_logs() -> impl Responder {}
+
+#[get("/users")]
+async fn get_all_users_handler() -> impl Responder {}
+
+#[get("/stats")]
+async fn get_site_stats_handler() -> impl Responder {}

@@ -12,7 +12,7 @@ pub struct User {
     pub phone: Option<String>,
     pub last_logged_in: Option<DateTime<Utc>>,
     pub verified: bool,
-    pub role: Role,
+    pub role: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
