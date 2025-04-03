@@ -35,7 +35,6 @@ fn filtered_user_record(user: &User) -> FilteredUser {
         email: user.email.to_string(),
         phone: user.phone.clone(),
         last_logged_in: user.last_logged_in.unwrap_or_else(|| Utc::now()),
-        photo: user.photo.clone(),
         verified: user.verified,
         role: user.role.clone(),
         created_at: user.created_at.unwrap_or_else(|| Utc::now()),
@@ -60,10 +59,10 @@ fn filtered_wallet_record(wallet: &UserWallet) -> FilteredWallet {
     }
 }
 
-fn filtered_transaction_record(user: &User, transaction: &Transactions) -> FilteredTransaction {
+fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransaction {
     FilteredTransaction {
         tx_id: transaction.tx_id.to_string(),
-        user_id: user.id.to_string(),
+        user_id: transaction.user_id.to_string(),
         order_type: transaction.order_type.clone(),
         crypto_amount: transaction.crypto_amount,
         crypto_type: transaction.crypto_type.clone(),
@@ -222,7 +221,7 @@ async fn update_user_wallet_handler(
     }
 }
 
-#[post("/{id}/{tx_hash}")]
+#[post("/users/me/transactions")]
 async fn update_transaction_handler(
     body: web::Json<TransactionSchema>,
     data: web::Data<AppState>,
@@ -263,31 +262,18 @@ async fn update_transaction_handler(
 
     match transaction {
         Ok(Some(transaction)) => {
-            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-                .bind(transaction.user_id)
-                .fetch_one(&data.db)
-                .await;
-
-            match user {
-                Ok(user) => {
-                    let filtered_transaction = filtered_transaction_record(&user, &transaction);
-                    HttpResponse::Ok().json(filtered_transaction)
-                }
-                Err(e) => {
-                    eprint!("Error fetching user: {}", e);
-                    HttpResponse::InternalServerError().json("User data retrieval failed!")
-                }
-            }
+            let filtered_transaction = filtered_transaction_record(&transaction); 
+            HttpResponse::Ok().json(filtered_transaction)
         }
         Ok(None) => HttpResponse::Conflict().json("Transaction already exists"),
         Err(e) => {
             eprint!("Database error: {}", e);
-            return HttpResponse::InternalServerError().json("Database error");
+            HttpResponse::InternalServerError().json("Database error")
         }
     }
 }
 
-#[post("/user/{id}/logs")]
+#[post("/users/me/logs")]
 async fn update_user_logs_handler(
     body: web::Json<UserSecurityLogsSchema>,
     data: web::Data<AppState>,
@@ -346,7 +332,7 @@ async fn update_user_logs_handler(
     }
 }
 
-#[post("/user/request-otp")]
+#[post("/users/request-otp")]
 async fn request_otp_handler(
     body: web::Json<OtpSchema>,
     data: web::Data<AppState>,
@@ -400,7 +386,7 @@ async fn request_otp_handler(
     }
 }
 
-#[post("/user/validate-otp")]
+#[post("/users/validate-otp")]
 async fn validate_otp(
     body: web::Json<ValidateOtpSchema>,
     data: web::Data<AppState>,
@@ -476,7 +462,7 @@ async fn validate_otp(
     }
 }
 
-#[get("/users/{id}")]
+#[get("/users/me")]
 async fn get_user_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
@@ -505,12 +491,57 @@ async fn get_user_handler(
     HttpResponse::Ok().json(json_response)
 }
 
+#[get("/users/me/transactions")]
+async fn get_transaction_handler(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let ext = req.extensions();
+    let user_id = ext.get::<uuid::Uuid>().unwrap();
 
-#[get("/user/{id}/transaction")]
-async fn get_transaction_handler() -> impl Responder {}
+    let transactions = match sqlx::query_as!(
+        Transactions,
+        "SELECT 
+            tx_id, user_id, order_type, crypto_amount, crypto_type, 
+            fiat_amount, fiat_currency, payment_method, payment_status, tx_hash, 
+            created_at, updated_at 
+            FROM transactions WHERE user_id = $1",
+        user_id
+    )
+    .fetch_all(&data.db)
+    .await
+    {
+        Ok(tx) => tx,
+        Err(e) => {
+            eprint!("Error fetching transactions: {}", e);
+            {
+                return HttpResponse::InternalServerError().json("Error fetching transactions");
+            }
+        }
+    };
+
+    let filtered_transactions: Vec<FilteredTransaction> = transactions
+        .into_iter()
+        .map(|transaction| filtered_transaction_record(&transaction))
+        .collect();
+
+    let json_response = serde_json::json!({
+        "status": "success",
+        "data": serde_json::json!({
+            "transactions": filtered_transactions
+        })
+    });
+
+    HttpResponse::Ok().json(json_response)
+}
 
 #[get("/user/{id}/logs")]
-async fn get_user_logs() -> impl Responder {}
+async fn get_user_logs(
+    
+) -> impl Responder {
+
+}
 
 #[get("/users")]
 async fn get_all_users_handler() -> impl Responder {}

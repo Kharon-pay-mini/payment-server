@@ -40,12 +40,12 @@ CREATE TABLE "transactions" (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     order_type VARCHAR(10) NOT NULL,
     crypto_amount DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-    crypto_type VARCHAR(10),
+    crypto_type VARCHAR(10) NOT NULL,
     fiat_amount DECIMAL(18,8) NOT NULL DEFAULT 0.0,
-    fiat_currency VARCHAR(20),
-    payment_method VARCHAR(20),
-    payment_status VARCHAR(20),
-    tx_hash VARCHAR(250) UNIQUE,
+    fiat_currency VARCHAR(20) NOT NULL,
+    payment_method VARCHAR(20) NOT NULL,
+    payment_status VARCHAR(20) NOT NULL,
+    tx_hash VARCHAR(250) UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
