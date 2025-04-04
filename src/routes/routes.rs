@@ -579,9 +579,12 @@ async fn get_user_logs(
     HttpResponse::Ok().json(json_response)
 }
 
-// #[get("/stats")]
-// async fn get_stats_handler(
+/* 
+TODO after MVP is completed
+#[get("/stats")]
+async fn get_stats_handler(
 
-// ) -> impl Responder {
+) -> impl Responder {
 
-// }
+}
+ */

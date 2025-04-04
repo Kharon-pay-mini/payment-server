@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod models;
 mod routes;
+mod service;
 
 use actix_cors::Cors;
 use actix_web::{http::header, middleware::Logger, web, App, HttpServer};

@@ -14,6 +14,8 @@ install:
 	cargo add rand_core --features "std"
 	cargo add rand
 	cargo add rust_decimal --features "db-postgres"
+	cargo add lettre --features "smtp-transport builder serde"
+	cargo add handlebars
 	cargo install cargo-watch
 
 
