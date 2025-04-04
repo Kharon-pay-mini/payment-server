@@ -134,7 +134,7 @@ pub struct OtpSchema {
 #[derive(Debug, Deserialize)]
 pub struct ValidateOtpSchema {
     pub user_id: uuid::Uuid,
-    pub otp: i32
+    pub otp: i32,
 }
 
 // /*  DISPLAY IMPLEMENTATION FOR ENUMS */

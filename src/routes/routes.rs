@@ -76,13 +76,10 @@ fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransactio
     }
 }
 
-fn filtered_security_logs(
-    user: &User,
-    security_log: &UserSecurityLogs,
-) -> FilteredUserSecurityLogs {
+fn filtered_security_logs(security_log: &UserSecurityLogs) -> FilteredUserSecurityLogs {
     FilteredUserSecurityLogs {
         log_id: security_log.log_id.to_string(),
-        user_id: user.id.to_string(),
+        user_id: security_log.user_id.to_string(),
         ip_address: security_log.ip_address.to_string(),
         city: security_log.city.to_string(),
         country: security_log.country.to_string(),
@@ -262,7 +259,7 @@ async fn update_transaction_handler(
 
     match transaction {
         Ok(Some(transaction)) => {
-            let filtered_transaction = filtered_transaction_record(&transaction); 
+            let filtered_transaction = filtered_transaction_record(&transaction);
             HttpResponse::Ok().json(filtered_transaction)
         }
         Ok(None) => HttpResponse::Conflict().json("Transaction already exists"),
@@ -306,21 +303,25 @@ async fn update_user_logs_handler(
 
     match security_log {
         Ok(Some(security_log)) => {
+            /* 
             let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
                 .bind(security_log.user_id)
                 .fetch_one(&data.db)
                 .await;
 
+                
             match user {
                 Ok(user) => {
-                    let filtered_security_logs = filtered_security_logs(&user, &security_log);
+                    let filtered_security_logs = filtered_security_logs(&security_log);
                     HttpResponse::Ok().json(filtered_security_logs)
                 }
                 Err(e) => {
                     eprint!("Error fetching user: {}", e);
                     HttpResponse::InternalServerError().json("User data retrieval failed!")
                 }
-            }
+            } */
+            let filtered_security_logs = filtered_security_logs(&security_log);
+            HttpResponse::Ok().json(filtered_security_logs)
         }
         Ok(None) => {
             HttpResponse::Conflict().json("Security log already exists or no changes detected")
@@ -536,15 +537,51 @@ async fn get_transaction_handler(
     HttpResponse::Ok().json(json_response)
 }
 
-#[get("/user/{id}/logs")]
+#[get("/users/me/logs")]
 async fn get_user_logs(
-    
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
+    let ext = req.extensions();
+    let user_id = ext.get::<uuid::Uuid>().unwrap();
 
+    let logs = match sqlx::query_as!(
+        UserSecurityLogs,
+        "SELECT log_id, user_id, ip_address,city,
+            country, failed_login_attempts, flagged_for_review,
+            created_at
+            FROM user_security_logs WHERE user_id = $1",
+        user_id
+    )
+    .fetch_all(&data.db)
+    .await
+    {
+        Ok(log) => log,
+        Err(e) => {
+            eprint!("Error fetching user logs: {}", e);
+            return HttpResponse::InternalServerError().json("Error fetching user logs");
+        }
+    };
+
+    let filtered_logs: Vec<FilteredUserSecurityLogs> = logs
+        .into_iter()
+        .map(|log| filtered_security_logs(&log))
+        .collect();
+
+    let json_response = serde_json::json!({
+        "status": "success",
+        "data": serde_json::json!({
+            "user_logs": filtered_logs
+        })
+    });
+
+    HttpResponse::Ok().json(json_response)
 }
 
-#[get("/users")]
-async fn get_all_users_handler() -> impl Responder {}
+// #[get("/stats")]
+// async fn get_stats_handler(
 
-#[get("/stats")]
-async fn get_site_stats_handler() -> impl Responder {}
+// ) -> impl Responder {
+
+// }
