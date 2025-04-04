@@ -303,13 +303,13 @@ async fn update_user_logs_handler(
 
     match security_log {
         Ok(Some(security_log)) => {
-            /* 
+            /*
             let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
                 .bind(security_log.user_id)
                 .fetch_one(&data.db)
                 .await;
 
-                
+
             match user {
                 Ok(user) => {
                     let filtered_security_logs = filtered_security_logs(&security_log);
@@ -579,7 +579,7 @@ async fn get_user_logs(
     HttpResponse::Ok().json(json_response)
 }
 
-/* 
+/*
 TODO after MVP is completed
 #[get("/stats")]
 async fn get_stats_handler(
