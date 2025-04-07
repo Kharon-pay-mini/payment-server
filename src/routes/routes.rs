@@ -479,10 +479,11 @@ async fn get_user_handler(
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
     let user = match sqlx::query_as!(User, "SELECT id, email, phone, last_logged_in, verified,role, created_at, updated_at FROM users WHERE id = $1", user_id)
-        .fetch_one(&data.db)
+        .fetch_optional(&data.db)
         .await
         {
-            Ok(user) => user,
+            Ok(Some(user)) => user,
+            Ok(None) => return HttpResponse::NotFound().json("User not found"),
             Err(e) => {
                 eprint!("Error fetching user: {}", e);
                 return HttpResponse::InternalServerError().json("Error fetching user");
