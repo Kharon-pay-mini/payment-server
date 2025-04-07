@@ -7,7 +7,7 @@ use serde_json::json;
 use std::env;
 use std::error::Error;
 
-pub async fn send_verification_email(to_email: &str, otp: &str) -> Result<(), Box<dyn Error>> {
+pub async fn send_verification_email(to_email: &str, otp: i32) -> Result<(), Box<dyn Error>> {
     let template_path = "./templates/request_otp.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;

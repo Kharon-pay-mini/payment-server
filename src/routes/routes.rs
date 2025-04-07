@@ -1,5 +1,4 @@
 use actix_web::{
-    body,
     cookie::{
         time::{ext, Duration as ActixWebDuration},
         Cookie,
@@ -7,11 +6,11 @@ use actix_web::{
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use chrono::Utc;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use rand::{rng, Rng};
 use serde_json::json;
 use sqlx::Row;
-use std::{error, time::Duration, usize};
+use std::{time::Duration, usize};
 
 use crate::{
     auth::jwt_auth,
@@ -26,6 +25,7 @@ use crate::{
             FilteredWallet, WalletData,
         },
     },
+    service::email_service::send_verification_email,
     AppState,
 };
 
@@ -89,10 +89,10 @@ fn filtered_security_logs(security_log: &UserSecurityLogs) -> FilteredUserSecuri
     }
 }
 
-fn filtered_otp(user: &User, otp: &Otp) -> FilteredOtp {
+fn filtered_otp(otp: &Otp) -> FilteredOtp {
     FilteredOtp {
         otp_id: otp.otp_id.to_string(),
-        user_id: user.id.to_string(),
+        user_id: otp.user_id.to_string(),
         otp: otp.otp,
         created_at: otp.created_at.unwrap_or_else(|| Utc::now()),
         expires_at: otp.expires_at.unwrap(),
@@ -182,10 +182,11 @@ async fn create_user_handler(
     }
 }
 
-#[post("/user/wallet")]
+#[post("/users/me/wallet")]
 async fn update_user_wallet_handler(
     body: web::Json<UserWalletSchema>,
     data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = body.user_id;
     let wallet_address = body.wallet_address.to_string();
@@ -196,7 +197,7 @@ async fn update_user_wallet_handler(
             VALUES ($1, $2, $3)
             ON CONFLICT (user_id) DO UPDATE
             SET wallet_address = EXCLUDED.wallet_address,
-            network_last_used = EXCLUDED.network_last_used,
+            network_used_last = EXCLUDED.network_used_last,
             updated_at = NOW() 
             RETURNING *",
     )
@@ -222,6 +223,7 @@ async fn update_user_wallet_handler(
 async fn update_transaction_handler(
     body: web::Json<TransactionSchema>,
     data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = body.user_id;
     let order_type = body.order_type.to_string();
@@ -274,6 +276,7 @@ async fn update_transaction_handler(
 async fn update_user_logs_handler(
     body: web::Json<UserSecurityLogsSchema>,
     data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = body.user_id;
     let ip_address = body.ip_address.to_string();
@@ -370,8 +373,12 @@ async fn request_otp_handler(
 
             match user {
                 Ok(user) => {
-                    //send otp via email
-                    let filtered_otp = filtered_otp(&user, &otp);
+                    if let Err(e) = send_verification_email(user.email.as_str(), otp.otp).await {
+                        eprint!("Failed to send email: {}", e);
+                        return HttpResponse::InternalServerError()
+                            .json("Failed to send verification email");
+                    }
+                    let filtered_otp = filtered_otp(&otp);
                     HttpResponse::Ok().json(filtered_otp)
                 }
                 Err(e) => {
@@ -431,7 +438,7 @@ async fn validate_otp(
 
             let now = Utc::now();
             let iat = now.timestamp() as usize;
-            let exp = (now + Duration::from_secs(15 * 60)).timestamp() as usize;
+            let exp = (now + Duration::from_secs(24 * 60 * 60)).timestamp() as usize;
             let claims: TokenClaims = TokenClaims {
                 sub: user_id.to_string(),
                 iat,
@@ -573,6 +580,40 @@ async fn get_user_logs(
         "status": "success",
         "data": serde_json::json!({
             "user_logs": filtered_logs
+        })
+    });
+
+    HttpResponse::Ok().json(json_response)
+}
+
+#[get("/users/me/wallet")]
+async fn get_wallet_handler(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _: jwt_auth::JwtMiddleware
+) -> impl Responder {
+    let ext = req. extensions();
+    let user_id = ext.get::<uuid::Uuid>().unwrap();
+
+    let wallet = match sqlx::query_as!(
+        UserWallet,
+        "SELECT id, user_id, wallet_address, network_used_last, created_at, updated_at FROM user_wallet WHERE user_id = $1",
+        user_id
+    )
+    .fetch_optional(&data.db)
+    .await 
+    {
+        Ok(Some(wallet)) => wallet,
+        Ok(None) => return HttpResponse::NotFound().json("Wallet not found"),
+        Err(e) => {
+            eprint!("Error fetching user wallet: {}", e);
+            return HttpResponse::InternalServerError().json("Error fetching user wallet");
+        }
+    };
+    let json_response = serde_json::json!({
+        "status": "success",
+        "data": serde_json::json!({
+            "wallet": filtered_wallet_record(&wallet)
         })
     });
 
