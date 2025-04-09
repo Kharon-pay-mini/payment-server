@@ -272,6 +272,8 @@ async fn update_transaction_handler(
     }
 }
 
+/*
+DEPRECATED, LOGGING NOW DONE AUTOMATICALLY
 #[post("/users/me/logs")]
 async fn update_user_logs_handler(
     body: web::Json<UserSecurityLogsSchema>,
@@ -334,7 +336,7 @@ async fn update_user_logs_handler(
             return HttpResponse::InternalServerError().json("Database error");
         }
     }
-}
+}       */
 
 #[post("/users/request-otp")]
 async fn request_otp_handler(
@@ -591,9 +593,9 @@ async fn get_user_logs(
 async fn get_wallet_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
-    _: jwt_auth::JwtMiddleware
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
-    let ext = req. extensions();
+    let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
 
     let wallet = match sqlx::query_as!(

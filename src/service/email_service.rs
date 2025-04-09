@@ -40,7 +40,10 @@ pub async fn send_verification_email(to_email: &str, otp: i32) -> Result<(), Box
     Ok(())
 }
 
-pub async fn send_request_password_reset_email(to_email: &str, link: &str) -> Result<(), Box<dyn Error>> {
+pub async fn send_request_password_reset_email(
+    to_email: &str,
+    link: &str,
+) -> Result<(), Box<dyn Error>> {
     let template_path = "./templates/request_password_reset.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
@@ -72,7 +75,6 @@ pub async fn send_request_password_reset_email(to_email: &str, link: &str) -> Re
 
     Ok(())
 }
-
 
 pub async fn send_password_reset_email(to_email: &str) -> Result<(), Box<dyn Error>> {
     let template_path = "./templates/reset_password.hbs";
