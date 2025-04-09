@@ -397,7 +397,7 @@ async fn request_otp_handler(
 }
 
 #[post("/users/validate-otp")]
-async fn validate_otp(
+async fn validate_otp_handler(
     body: web::Json<ValidateOtpSchema>,
     data: web::Data<AppState>,
 ) -> impl Responder {
@@ -548,7 +548,7 @@ async fn get_transaction_handler(
 }
 
 #[get("/users/me/logs")]
-async fn get_user_logs(
+async fn get_user_logs_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
     _: jwt_auth::JwtMiddleware,
