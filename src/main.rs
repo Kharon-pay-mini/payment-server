@@ -1,18 +1,24 @@
 mod auth;
 mod config;
+mod middleware;
 mod models;
 mod routes;
 mod service;
 
+use std::sync::Arc;
+
 use actix_cors::Cors;
-use actix_web::{http::header, middleware::Logger, web, App, HttpServer};
+use actix_web::{http::header, middleware::{from_fn, Logger}, web, App, HttpServer};
 use config::config::Config;
 use dotenv::dotenv;
+use middleware::security_log::security_logger_middleware;
+use service::geolocation::geolocator::GeoLocator;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
 pub struct AppState {
     db: Pool<Postgres>,
     env: Config,
+    pub geo_locator: GeoLocator,
 }
 
 #[actix_web::main]
@@ -43,6 +49,8 @@ async fn main() -> std::io::Result<()> {
 
     println!("Server started successfully...");
 
+    let geo_locator = GeoLocator::new(config.ip_info_token.clone());
+
     HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin("http://localhost:3000")
@@ -55,13 +63,15 @@ async fn main() -> std::io::Result<()> {
         // .supports_credentials()
 
         App::new()
-            .app_data(web::Data::new(AppState {
-                db: pool.clone(),
-                env: config.clone(),
-            }))
+        .app_data(web::Data::from(Arc::new(AppState {
+            db: pool.clone(),
+            env: config.clone(),
+            geo_locator: geo_locator.clone(),
+        })))        
             // .configure(f)
             .wrap(cors)
             .wrap(Logger::default())
+            .wrap(from_fn(security_logger_middleware))
     })
     .bind(("127.0.0.1", 8000))?
     .run()
