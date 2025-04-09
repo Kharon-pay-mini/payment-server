@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use actix_cors::Cors;
 use actix_web::{http::header, middleware::{from_fn, Logger}, web, App, HttpServer};
-use config::config::Config;
+use config::{config::Config, config_scope};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use service::geolocation::geolocator::GeoLocator;
@@ -68,7 +68,7 @@ async fn main() -> std::io::Result<()> {
             env: config.clone(),
             geo_locator: geo_locator.clone(),
         })))        
-            // .configure(f)
+            .configure(config_scope::config)
             .wrap(cors)
             .wrap(Logger::default())
             .wrap(from_fn(security_logger_middleware))
