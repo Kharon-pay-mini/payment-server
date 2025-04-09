@@ -147,12 +147,12 @@ async fn create_user_handler(
         }
     } else {
         let mut query = "INSERT INTO users (email, role, last_logged_in".to_string();
-        let mut values = "VALUES ($1, $2, $3, now()".to_string();
+        let mut values = "VALUES ($1, $2, now()".to_string();
         let mut params = vec![email.clone(), role.clone()];
 
         if let Some(phone) = &phone {
             query.push_str(", phone");
-            values.push_str(", $4");
+            values.push_str(", $3");
             params.push(phone.to_string());
         }
         query.push_str(") ");
