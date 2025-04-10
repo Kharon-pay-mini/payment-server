@@ -107,9 +107,9 @@ pub struct UserWalletSchema {
 pub struct TransactionSchema {
     pub user_id: uuid::Uuid,
     pub order_type: String,
-    pub crypto_amount: u128,
+    pub crypto_amount: i64,
     pub crypto_type: String,
-    pub fiat_amount: u128,
+    pub fiat_amount: i64,
     pub fiat_currency: String,
     pub payment_method: String,
     pub payment_status: String,
@@ -129,6 +129,7 @@ pub struct UserSecurityLogsSchema {
 #[derive(Debug, Deserialize)]
 pub struct OtpSchema {
     pub user_id: uuid::Uuid,
+    pub email: String
 }
 
 #[derive(Debug, Deserialize)]

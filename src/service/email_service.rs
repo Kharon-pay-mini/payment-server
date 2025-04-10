@@ -8,7 +8,9 @@ use std::env;
 use std::error::Error;
 
 pub async fn send_verification_email(to_email: &str, otp: i32) -> Result<(), Box<dyn Error>> {
-    let template_path = "./templates/request_otp.hbs";
+    let template_path = "src/service/templates/request_otp.hbs";
+    println!("Current working directory: {:?}", std::env::current_dir()?);
+
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
     let smtp_password = env::var("SMTP_PASSWORD")?;
@@ -44,7 +46,7 @@ pub async fn send_request_password_reset_email(
     to_email: &str,
     link: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let template_path = "./templates/request_password_reset.hbs";
+    let template_path = "service/templates/request_password_reset.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
     let smtp_password = env::var("SMTP_PASSWORD")?;
