@@ -1,4 +1,5 @@
-use awc::Client;
+// use awc::Client;
+use ipinfo::{IpInfo, IpInfoConfig};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Default)]
@@ -18,13 +19,20 @@ impl GeoLocator {
     }
 
     pub async fn lookup(&self, ip: &str) -> Result<IpInfoResponse, Box<dyn std::error::Error>> {
-        let url = format!("https://ipinfo.io/{ip}?token={}", self.token);
-        let client = Client::default();
+        let config = IpInfoConfig {
+            token: Some(self.token.clone()),
+            ..Default::default()
+        };
 
-        let mut response = client.get(url).send().await?;
-        let body = response.body().limit(65536).await?;
+        let mut ipinfo = IpInfo::new(config).expect("should construct ipInfo");
 
-        let geo: IpInfoResponse = serde_json::from_slice(&body)?;
+        let res = ipinfo.lookup(ip).await?;
+
+        let geo = IpInfoResponse {
+            city: Some(res.city),
+            country: Some(res.country),
+        };
+
         Ok(geo)
     }
 }

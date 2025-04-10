@@ -195,7 +195,7 @@ async fn update_user_wallet_handler(
     let wallet = sqlx::query_as::<_, UserWallet>(
         "INSERT INTO user_wallet (user_id, wallet_address, network_used_last)
             VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE
+            ON CONFLICT ON CONSTRAINT unique_user_wallet_user_id DO UPDATE
             SET wallet_address = EXCLUDED.wallet_address,
             network_used_last = EXCLUDED.network_used_last,
             updated_at = NOW() 
@@ -227,9 +227,9 @@ async fn update_transaction_handler(
 ) -> impl Responder {
     let user_id = body.user_id;
     let order_type = body.order_type.to_string();
-    let crypto_amount = body.crypto_amount.to_string();
+    let crypto_amount = body.crypto_amount;
     let crypto_type = body.crypto_type.to_string();
-    let fiat_amount = body.fiat_amount.to_string();
+    let fiat_amount = body.fiat_amount;
     let fiat_currency = body.fiat_currency.to_string();
     let payment_method = body.payment_method.to_string();
     let payment_status = body.payment_status.to_string();
@@ -243,7 +243,17 @@ async fn update_transaction_handler(
             tx_hash
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (user_id, tx_hash) DO NOTHING
+        ON CONFLICT ON CONSTRAINT unique_transaction_hash
+        DO UPDATE
+        SET
+            user_id = EXCLUDED.user_id,
+            order_type = EXCLUDED.order_type,
+            crypto_amount = EXCLUDED.crypto_amount,
+            crypto_type = EXCLUDED.crypto_type,
+            fiat_amount = EXCLUDED.fiat_amount,
+            fiat_currency = EXCLUDED.fiat_currency,
+            payment_method = EXCLUDED.payment_method,
+            payment_status = EXCLUDED.payment_status
         RETURNING *
     "#,
     )
@@ -344,8 +354,9 @@ async fn request_otp_handler(
     data: web::Data<AppState>,
 ) -> impl Responder {
     let user_id = body.user_id;
+    let email = body.email.clone();
 
-    let otp = rng().random_range(100_000..=999_999).to_string();
+    let otp_code = rng().random_range(100_000..=999_999);
 
     let expiry = Utc::now() + Duration::from_secs(15 * 60);
 
@@ -353,15 +364,15 @@ async fn request_otp_handler(
         r#"
         INSERT INTO otp (user_id, otp, expires_at)
         VALUES ($1, $2, $3)
-        ON CONFLICT (user_id) DO UPDATE 
+        ON CONFLICT ON CONSTRAINT unique_user_id DO UPDATE 
         SET otp = $2,
             created_at = NOW(),
-            expires_at = $3,
-        RETURNING user_id, otp, created_at, expires_at
+            expires_at = $3
+        RETURNING otp_id, user_id, otp, created_at, expires_at
         "#,
     )
     .bind(user_id)
-    .bind(otp)
+    .bind(otp_code)
     .bind(expiry)
     .fetch_one(&data.db)
     .await;
@@ -375,13 +386,16 @@ async fn request_otp_handler(
 
             match user {
                 Ok(user) => {
-                    if let Err(e) = send_verification_email(user.email.as_str(), otp.otp).await {
+                    if let Err(e) = send_verification_email(&email, otp_code).await {
                         eprint!("Failed to send email: {}", e);
                         return HttpResponse::InternalServerError()
                             .json("Failed to send verification email");
                     }
                     let filtered_otp = filtered_otp(&otp);
-                    HttpResponse::Ok().json(filtered_otp)
+                    HttpResponse::Ok().json(json!({
+                        "otp": filtered_otp,
+                        "user": filtered_user_record(&user),
+                    }))
                 }
                 Err(e) => {
                     eprint!("Error fetching user: {}", e);
@@ -404,7 +418,7 @@ async fn validate_otp_handler(
     let user_id = body.user_id;
     let otp = body.otp;
 
-    let stored_otp = sqlx::query_as::<_, Otp>("SELECT otp, expires_at FROM otp WHERE user_id = $1")
+    let stored_otp = sqlx::query_as::<_, Otp>("SELECT * FROM otp WHERE user_id = $1")
         .bind(user_id)
         .fetch_optional(&data.db)
         .await;

@@ -1,8 +1,9 @@
-use crate::AppState;
+use crate::{models::models::TokenClaims, AppState};
 use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
+    http::header,
     middleware::Next,
-    Error, HttpMessage,
+    web, Error
 };
 
 pub async fn security_logger_middleware(
@@ -10,7 +11,7 @@ pub async fn security_logger_middleware(
     next: Next<impl actix_web::body::MessageBody>,
 ) -> Result<ServiceResponse<impl actix_web::body::MessageBody>, Error> {
     let app_data = req.app_data::<actix_web::web::Data<AppState>>().cloned();
-    let user_id = req.extensions().get::<uuid::Uuid>().cloned();
+    let user_id = extract_user_id(&req, app_data.as_ref());
     let ip_address = req
         .connection_info()
         .realip_remote_addr()
@@ -23,7 +24,7 @@ pub async fn security_logger_middleware(
     let response = next.call(req).await?;
     let status = response.status().as_u16();
 
-    if let (Some(user_id), Some(app_data)) = (user_id, app_data) {
+    if let Some(app_data) = app_data {
         let is_login_failure = (path.contains("/auth") || path.contains("/validate-otp"))
             && (status == 401 || status == 403);
 
@@ -88,4 +89,35 @@ pub async fn security_logger_middleware(
     }
 
     Ok(response)
+}
+
+fn extract_user_id(
+    req: &ServiceRequest,
+    app_state: Option<&web::Data<AppState>>,
+) -> Option<uuid::Uuid> {
+    let token = req
+        .cookie("token")
+        .map(|c| c.value().to_string())
+        .or_else(|| {
+            req.headers()
+                .get(header::AUTHORIZATION)
+                .map(|h| h.to_str().unwrap_or_default().split_at(7).1.to_string())
+        });
+
+    if let (Some(token), Some(app_state)) = (token, app_state) {
+        match jsonwebtoken::decode::<TokenClaims>(
+            &token,
+            &jsonwebtoken::DecodingKey::from_secret(app_state.env.jwt_secret.as_ref()),
+            &jsonwebtoken::Validation::default(),
+        ) {
+            Ok(data) => {
+                if let Ok(user_id) = uuid::Uuid::parse_str(&data.claims.sub) {
+                    return Some(user_id);
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+
+    None
 }
