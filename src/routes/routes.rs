@@ -296,7 +296,6 @@ async fn update_user_logs_handler(
     let country = body.country.to_string();
     let failed_login_attempts = body.failed_login_attempts;
     let flagged_for_review = body.flagged_for_review;
-
     let security_log = sqlx::query_as::<_, UserSecurityLogs>(
         r#"
         INSERT INTO user_security_logs (
@@ -315,7 +314,6 @@ async fn update_user_logs_handler(
     .bind(flagged_for_review)
     .fetch_optional(&data.db)
     .await;
-
     match security_log {
         Ok(Some(security_log)) => {
             /*
@@ -323,8 +321,6 @@ async fn update_user_logs_handler(
                 .bind(security_log.user_id)
                 .fetch_one(&data.db)
                 .await;
-
-
             match user {
                 Ok(user) => {
                     let filtered_security_logs = filtered_security_logs(&security_log);
@@ -641,8 +637,6 @@ async fn get_wallet_handler(
 TODO after MVP is completed
 #[get("/stats")]
 async fn get_stats_handler(
-
 ) -> impl Responder {
-
 }
  */
