@@ -116,21 +116,23 @@ async fn create_user_handler(
         .get(0);
 
     if exists {
-        let mut query = "UPDATE users SET last_logged_in = NOW() WHERE email = $1".to_string();
-        let mut params = vec![email.clone()];
-
-        if let Some(phone) = &phone {
-            query.push_str(" AND phone = $2");
-            params.push(phone.to_string());
-        }
-
-        query.push_str(" RETURNING *");
-
-        let query_result = sqlx::query_as::<_, User>(&query)
+        let query_result = match &phone {
+            Some(phone_value) => sqlx::query_as::<_, User>(
+                "UPDATE users SET last_logged_in = NOW(), phone = $2 WHERE email = $1 RETURNING *",
+            )
             .bind(&email)
-            .bind(phone.as_ref().map(|s| s.as_str()))
+            .bind(phone_value)
             .fetch_one(&data.db)
-            .await;
+            .await,
+            None => {
+                sqlx::query_as::<_, User>(
+                    "UPDATE users SET last_logged_in = NOW() WHERE email = $1 RETURNING *",
+                )
+                .bind(&email)
+                .fetch_one(&data.db)
+                .await
+            }
+        };
 
         match query_result {
             Ok(user) => {
@@ -141,30 +143,29 @@ async fn create_user_handler(
                 return HttpResponse::Ok().json(user_response);
             }
             Err(e) => {
+                eprintln!("Database error on update: {:?}", e);
                 return HttpResponse::InternalServerError()
                     .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
             }
         }
     } else {
-        let mut query = "INSERT INTO users (email, role, last_logged_in".to_string();
-        let mut values = "VALUES ($1, $2, now()".to_string();
-        let mut params = vec![email.clone(), role.clone()];
-
-        if let Some(phone) = &phone {
-            query.push_str(", phone");
-            values.push_str(", $3");
-            params.push(phone.to_string());
-        }
-        query.push_str(") ");
-        values.push_str(") RETURNING *");
-        query.push_str(&values);
-
-        let query_result = sqlx::query_as::<_, User>(&query)
-            .bind(&email)
-            .bind(&role)
-            .bind(phone.as_ref().map(|s| s.as_str()))
-            .fetch_one(&data.db)
-            .await;
+        let query_result = match &phone {
+            Some(phone_value) => {
+                sqlx::query_as::<_, User>("INSERT INTO users (email, role, phone, last_logged_in) VALUES ($1, $2, $3, now()) RETURNING *")
+                    .bind(&email)
+                    .bind(&role)
+                    .bind(phone_value)
+                    .fetch_one(&data.db)
+                    .await
+            },
+            None => {
+                sqlx::query_as::<_, User>("INSERT INTO users (email, role, last_logged_in) VALUES ($1, $2, now()) RETURNING *")
+                    .bind(&email)
+                    .bind(&role)
+                    .fetch_one(&data.db)
+                    .await
+            }
+        };
 
         match query_result {
             Ok(user) => {
@@ -175,6 +176,7 @@ async fn create_user_handler(
                 return HttpResponse::Ok().json(user_response);
             }
             Err(e) => {
+                eprintln!("Database error on insert: {:?}", e);
                 return HttpResponse::InternalServerError()
                     .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
             }

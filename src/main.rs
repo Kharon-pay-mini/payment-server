@@ -8,7 +8,11 @@ mod service;
 use std::sync::Arc;
 
 use actix_cors::Cors;
-use actix_web::{http::header, middleware::{from_fn, Logger}, web, App, HttpServer};
+use actix_web::{
+    http::header,
+    middleware::{from_fn, Logger},
+    web, App, HttpServer,
+};
 use config::{config::Config, config_scope};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
@@ -63,11 +67,11 @@ async fn main() -> std::io::Result<()> {
         // .supports_credentials()
 
         App::new()
-        .app_data(web::Data::from(Arc::new(AppState {
-            db: pool.clone(),
-            env: config.clone(),
-            geo_locator: geo_locator.clone(),
-        })))        
+            .app_data(web::Data::from(Arc::new(AppState {
+                db: pool.clone(),
+                env: config.clone(),
+                geo_locator: geo_locator.clone(),
+            })))
             .configure(config_scope::config)
             .wrap(cors)
             .wrap(Logger::default())

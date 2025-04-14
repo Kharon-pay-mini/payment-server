@@ -129,7 +129,7 @@ pub struct UserSecurityLogsSchema {
 #[derive(Debug, Deserialize)]
 pub struct OtpSchema {
     pub user_id: uuid::Uuid,
-    pub email: String
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]

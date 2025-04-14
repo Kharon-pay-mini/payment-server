@@ -1,10 +1,9 @@
-
 use crate::{models::models::TokenClaims, AppState};
 use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
     http::header,
     middleware::Next,
-    web, Error
+    web, Error,
 };
 
 pub async fn security_logger_middleware(

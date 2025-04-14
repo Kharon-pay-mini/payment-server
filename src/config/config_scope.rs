@@ -6,7 +6,6 @@ use crate::routes::routes::{
     update_user_wallet_handler, validate_otp_handler,
 };
 
-
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/api")
         .service(create_user_handler)
