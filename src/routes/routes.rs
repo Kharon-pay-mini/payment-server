@@ -1,8 +1,5 @@
 use actix_web::{
-    cookie::{
-        time::{ext, Duration as ActixWebDuration},
-        Cookie,
-    },
+    cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use chrono::Utc;
@@ -17,12 +14,11 @@ use crate::{
     models::{
         models::{
             CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
-            UserSecurityLogs, UserSecurityLogsSchema, UserWallet, UserWalletSchema,
-            ValidateOtpSchema,
+            UserSecurityLogs, UserWallet, UserWalletSchema, ValidateOtpSchema,
         },
         response::{
             FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
-            FilteredWallet, WalletData,
+            FilteredWallet,
         },
     },
     service::email_service::send_verification_email,
@@ -37,14 +33,12 @@ fn filtered_user_record(user: &User) -> FilteredUser {
         last_logged_in: user.last_logged_in.unwrap_or_else(|| Utc::now()),
         verified: user.verified,
         role: user.role.clone(),
-        created_at: user.created_at.unwrap_or_else(|| Utc::now()),
-        updated_at: user.updated_at.unwrap_or_else(|| Utc::now()),
+        created_at: user.created_at.unwrap(),
     }
 }
 
 fn filtered_wallet_record(wallet: &UserWallet) -> FilteredWallet {
     FilteredWallet {
-        id: wallet.id.to_string(),
         user_id: wallet.user_id.to_string(),
         wallet_address: wallet
             .wallet_address
@@ -54,7 +48,7 @@ fn filtered_wallet_record(wallet: &UserWallet) -> FilteredWallet {
             .network_used_last
             .as_ref()
             .map_or("Unknown".to_string(), |s| s.to_string()),
-        created_at: wallet.created_at.unwrap_or_else(|| Utc::now()),
+        created_at: wallet.created_at,
         updated_at: wallet.updated_at.unwrap_or_else(|| Utc::now()),
     }
 }
@@ -71,7 +65,7 @@ fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransactio
         payment_method: transaction.payment_method.clone(),
         payment_status: transaction.payment_status.clone(),
         t_hash: transaction.tx_hash.to_string(),
-        created_at: transaction.created_at.unwrap_or_else(|| Utc::now()),
+        created_at: transaction.created_at,
         updated_at: transaction.updated_at.unwrap_or_else(|| Utc::now()),
     }
 }
@@ -184,50 +178,95 @@ async fn create_user_handler(
     }
 }
 
+
 #[post("/users/me/wallet")]
 async fn update_user_wallet_handler(
     body: web::Json<UserWalletSchema>,
     data: web::Data<AppState>,
-    _: jwt_auth::JwtMiddleware,
+    auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
-    let user_id = body.user_id;
+    let user_id = auth.user_id;
+    println!("User ID: {}", user_id);
     let wallet_address = body.wallet_address.to_string();
     let network = body.network.to_string();
 
-    let wallet = sqlx::query_as::<_, UserWallet>(
-        "INSERT INTO user_wallet (user_id, wallet_address, network_used_last)
-            VALUES ($1, $2, $3)
-            ON CONFLICT ON CONSTRAINT unique_user_wallet_user_id DO UPDATE
-            SET wallet_address = EXCLUDED.wallet_address,
-            network_used_last = EXCLUDED.network_used_last,
-            updated_at = NOW() 
-            RETURNING *",
+
+    let user_exists: bool = match sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)"
     )
     .bind(user_id)
-    .bind(wallet_address)
-    .bind(network)
     .fetch_one(&data.db)
-    .await;
+    .await {
+        Ok(exists) => exists,
+        Err(e) => {
+            eprintln!("User verification error: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "User verification failed"
+            }));
+        }
+    };
 
-    match wallet {
-        Ok(wallet) => {
-            let filtered_wallet = filtered_wallet_record(&wallet);
-            return HttpResponse::Created().json(filtered_wallet);
+    if !user_exists {
+        return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        }));
+    }
+
+    // 2. Insert or update wallet with ownership check
+    let wallet = match sqlx::query_as::<_, UserWallet>(
+        r#"
+        WITH new_wallet AS (
+            INSERT INTO user_wallet (user_id, wallet_address, network_used_last)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (wallet_address) 
+            DO UPDATE SET 
+                network_used_last = EXCLUDED.network_used_last,
+                updated_at = NOW()
+            WHERE user_wallet.user_id = $1
+            RETURNING *
+        )
+        SELECT * FROM new_wallet
+        UNION ALL
+        SELECT * FROM user_wallet 
+        WHERE wallet_address = $2 AND user_id = $1 AND NOT EXISTS (
+            SELECT 1 FROM new_wallet
+        )
+        "#,
+    )
+    .bind(user_id)
+    .bind(&wallet_address)
+    .bind(&network)
+    .fetch_one(&data.db)
+    .await {
+        Ok(wallet) => wallet,
+        Err(sqlx::Error::RowNotFound) => {
+            return HttpResponse::Conflict().json(json!({
+                "status": "error",
+                "message": "Wallet address already belongs to another user"
+            }));
         }
         Err(e) => {
-            eprint!("Database error: {}", e);
-            HttpResponse::InternalServerError().body("Database error")
+            eprintln!("Database error: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to update wallet"
+            }));
         }
-    }
+    };
+
+    let filtered_wallet = filtered_wallet_record(&wallet);
+    HttpResponse::Created().json(filtered_wallet)
 }
 
 #[post("/users/me/transactions")]
 async fn update_transaction_handler(
     body: web::Json<TransactionSchema>,
     data: web::Data<AppState>,
-    _: jwt_auth::JwtMiddleware,
+    auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
-    let user_id = body.user_id;
+    let user_id = auth.user_id;
     let order_type = body.order_type.to_string();
     let crypto_amount = body.crypto_amount;
     let crypto_type = body.crypto_type.to_string();
@@ -255,7 +294,8 @@ async fn update_transaction_handler(
             fiat_amount = EXCLUDED.fiat_amount,
             fiat_currency = EXCLUDED.fiat_currency,
             payment_method = EXCLUDED.payment_method,
-            payment_status = EXCLUDED.payment_status
+            payment_status = EXCLUDED.payment_status,
+            updated_at = NOW()
         RETURNING *
     "#,
     )
@@ -492,7 +532,7 @@ async fn get_user_handler(
 ) -> impl Responder {
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
-    let user = match sqlx::query_as!(User, "SELECT id, email, phone, last_logged_in, verified,role, created_at, updated_at FROM users WHERE id = $1", user_id)
+    let user = match sqlx::query_as!(User, "SELECT id, email, phone, last_logged_in, verified,role, created_at FROM users WHERE id = $1", user_id)
         .fetch_optional(&data.db)
         .await
         {

@@ -15,8 +15,6 @@ pub struct User {
     pub role: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<DateTime<Utc>>,
-    #[serde(rename = "updatedAt")]
-    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
@@ -98,18 +96,16 @@ pub struct CreateUserSchema {
 
 #[derive(Debug, Deserialize)]
 pub struct UserWalletSchema {
-    pub user_id: uuid::Uuid,
     pub wallet_address: String,
     pub network: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TransactionSchema {
-    pub user_id: uuid::Uuid,
     pub order_type: String,
-    pub crypto_amount: i64,
+    pub crypto_amount: f64,
     pub crypto_type: String,
-    pub fiat_amount: i64,
+    pub fiat_amount: f64,
     pub fiat_currency: String,
     pub payment_method: String,
     pub payment_status: String,

@@ -13,8 +13,6 @@ pub struct FilteredUser {
     pub role: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
-    #[serde(rename = "updatedAt")]
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -24,12 +22,11 @@ pub struct UserData {
 
 #[derive(Debug, Serialize)]
 pub struct FilteredWallet {
-    pub id: String,
     pub user_id: String,
     pub wallet_address: String,
     pub network_used_last: String,
     #[serde(rename = "createdAt")]
-    pub created_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
 }
@@ -59,7 +56,7 @@ pub struct FilteredTransaction {
     pub payment_status: String,
     pub t_hash: String,
     #[serde(rename = "createdAt")]
-    pub created_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
 }
