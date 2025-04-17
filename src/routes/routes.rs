@@ -10,8 +10,7 @@ use sqlx::Row;
 use std::{time::Duration, usize};
 
 use crate::{
-    auth::jwt_auth,
-    models::{
+    auth::jwt_auth, integrations::{bank::{fetch_banks_via_paystack, verify_account_via_paystack}, bank_model::BankVerificationSchema}, models::{
         models::{
             CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
             UserSecurityLogs, UserWallet, UserWalletSchema, ValidateOtpSchema,
@@ -20,9 +19,7 @@ use crate::{
             FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
             FilteredWallet,
         },
-    },
-    service::email_service::send_verification_email,
-    AppState,
+    }, service::email_service::send_verification_email, AppState
 };
 
 fn filtered_user_record(user: &User) -> FilteredUser {
@@ -674,6 +671,78 @@ async fn get_wallet_handler(
 
     HttpResponse::Ok().json(json_response)
 }
+
+#[get("/banks")]
+pub async fn fetch_banks_handler(data: web::Data<AppState>) -> impl Responder {
+    match fetch_banks_via_paystack(&data).await {
+        Ok(banks) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "data": banks
+        })),
+        Err(e) => {
+            eprintln!("Failed to fetch banks: {}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve bank list"
+            }))
+        }
+    }
+}
+
+
+#[get("/banks/verify")]
+pub async fn verify_bank_account_handler(
+    data: web::Data<AppState>,
+    body: web::Json<BankVerificationSchema>,
+    _: jwt_auth::JwtMiddleware
+) -> impl Responder {
+    let account_number = body.account_number.trim();
+    let bank_name = body.bank_name.trim();
+
+    if account_number.is_empty() || bank_name.is_empty() {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Account number and bank code are required"
+        }));
+    }
+
+    match fetch_banks_via_paystack(&data).await {
+        Ok(banks) => {
+            let bank = banks.iter().find(|b| b.name.to_lowercase() == bank_name.to_lowercase());
+            
+            if let Some(bank) = bank {
+              match verify_account_via_paystack(&data, account_number, &bank.code).await {
+                Ok(account_details) => {
+                    HttpResponse::Ok().json(json!({
+                        "status": "success",
+                        "data": {
+                            "account_name": account_details.account_name,
+                            "account_number": account_details.account_number
+                        }
+                    }))
+                },
+                Err(e) => HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": format!("Account verification failed: {}", e)
+                }))
+              }              
+            } else {
+                HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "message": "Bank not found"
+                }))
+            }
+        },
+        Err(e) => {
+            eprintln!("Failed to fetch banks: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve bank list"
+            }));
+        }
+    }
+}
+
 
 /*
 TODO after MVP is completed

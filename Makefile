@@ -17,6 +17,8 @@ install:
 	cargo add lettre --features "smtp-transport builder serde"
 	cargo add handlebars
 	cargo add awc
+	cargo add reqwest --features "json"
+	cargo add tokio --features "full"
 	# cargo add futures
 	cargo add futures-util
 	cargo add actix-web-lab

@@ -4,6 +4,7 @@ mod middleware;
 mod models;
 mod routes;
 mod service;
+mod integrations;
 
 use std::sync::Arc;
 
