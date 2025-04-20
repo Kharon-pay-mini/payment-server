@@ -8,11 +8,27 @@ install:
 	cargo add env_logger
 	cargo add dotenv
 	cargo add uuid --features "serde v4"
-	cargo add sqlx --features "runtime-async-std-native-tls postgres chrono uuid"
+	cargo add sqlx --features "runtime-async-std-native-tls postgres chrono uuid rust_decimal"
 	cargo add jsonwebtoken
 	cargo add argon2
 	cargo add rand_core --features "std"
+	cargo add rand
+	cargo add rust_decimal --features "db-postgres"
+	cargo add lettre --features "smtp-transport builder serde"
+	cargo add handlebars
+	cargo add awc
+	cargo add reqwest --features "json"
+	cargo add tokio --features "full"
+	# cargo add futures
+	cargo add futures-util
+	cargo add actix-web-lab
+	cargo add base64
+	cargo add log 
+	cargo add redis --features "tokio-comp"
+	cargo add bb8
+	cargo add bb8-redis
 	cargo install cargo-watch
+
 
 run: 
 	cargo r -r 
@@ -25,3 +41,6 @@ migrate:
 
 create_migrate:
 	sqlx migrate add -r init
+
+restart postgres:
+	sudo systemctl restart postgresql
