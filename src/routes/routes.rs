@@ -7,10 +7,16 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use rand::{rng, Rng};
 use serde_json::json;
 use sqlx::Row;
+use uuid::Uuid;
 use std::{time::Duration, usize};
 
 use crate::{
-    auth::jwt_auth, integrations::{bank::{fetch_banks_via_paystack, verify_account_via_paystack}, bank_model::BankVerificationSchema}, models::{
+    auth::jwt_auth,
+    integrations::{
+        bank::{disburse_payment, fetch_banks_via_paystack, store_pending_disbursement, verify_account_via_paystack},
+        model::{BankVerificationSchema, DisbursementDetails, InitDisbursementRequest, InitDisbursementResponse, OfframpRequest, PaymentResult, PendingDisbursement},
+    },
+    models::{
         models::{
             CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
             UserSecurityLogs, UserWallet, UserWalletSchema, ValidateOtpSchema,
@@ -19,7 +25,9 @@ use crate::{
             FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
             FilteredWallet,
         },
-    }, service::email_service::send_verification_email, AppState
+    },
+    service::email_service::send_verification_email,
+    AppState,
 };
 
 fn filtered_user_record(user: &User) -> FilteredUser {
@@ -175,7 +183,6 @@ async fn create_user_handler(
     }
 }
 
-
 #[post("/users/me/wallet")]
 async fn update_user_wallet_handler(
     body: web::Json<UserWalletSchema>,
@@ -187,22 +194,21 @@ async fn update_user_wallet_handler(
     let wallet_address = body.wallet_address.to_string();
     let network = body.network.to_string();
 
-
-    let user_exists: bool = match sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)"
-    )
-    .bind(user_id)
-    .fetch_one(&data.db)
-    .await {
-        Ok(exists) => exists,
-        Err(e) => {
-            eprintln!("User verification error: {}", e);
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "User verification failed"
-            }));
-        }
-    };
+    let user_exists: bool =
+        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+            .bind(user_id)
+            .fetch_one(&data.db)
+            .await
+        {
+            Ok(exists) => exists,
+            Err(e) => {
+                eprintln!("User verification error: {}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "User verification failed"
+                }));
+            }
+        };
 
     if !user_exists {
         return HttpResponse::NotFound().json(json!({
@@ -236,7 +242,8 @@ async fn update_user_wallet_handler(
     .bind(&wallet_address)
     .bind(&network)
     .fetch_one(&data.db)
-    .await {
+    .await
+    {
         Ok(wallet) => wallet,
         Err(sqlx::Error::RowNotFound) => {
             return HttpResponse::Conflict().json(json!({
@@ -689,12 +696,11 @@ pub async fn fetch_banks_handler(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
-
 #[get("/banks/verify")]
 pub async fn verify_bank_account_handler(
     data: web::Data<AppState>,
     body: web::Json<BankVerificationSchema>,
-    _: jwt_auth::JwtMiddleware
+    _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let account_number = body.account_number.trim();
     let bank_name = body.bank_name.trim();
@@ -708,31 +714,31 @@ pub async fn verify_bank_account_handler(
 
     match fetch_banks_via_paystack(&data).await {
         Ok(banks) => {
-            let bank = banks.iter().find(|b| b.name.to_lowercase() == bank_name.to_lowercase());
-            
+            let bank = banks
+                .iter()
+                .find(|b| b.name.to_lowercase() == bank_name.to_lowercase());
+
             if let Some(bank) = bank {
-              match verify_account_via_paystack(&data, account_number, &bank.code).await {
-                Ok(account_details) => {
-                    HttpResponse::Ok().json(json!({
+                match verify_account_via_paystack(&data, account_number, &bank.code).await {
+                    Ok(account_details) => HttpResponse::Ok().json(json!({
                         "status": "success",
                         "data": {
                             "account_name": account_details.account_name,
                             "account_number": account_details.account_number
                         }
-                    }))
-                },
-                Err(e) => HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": format!("Account verification failed: {}", e)
-                }))
-              }              
+                    })),
+                    Err(e) => HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Account verification failed: {}", e)
+                    })),
+                }
             } else {
                 HttpResponse::BadRequest().json(json!({
                     "status": "error",
                     "message": "Bank not found"
                 }))
             }
-        },
+        }
         Err(e) => {
             eprintln!("Failed to fetch banks: {}", e);
             return HttpResponse::InternalServerError().json(json!({
@@ -743,6 +749,142 @@ pub async fn verify_bank_account_handler(
     }
 }
 
+#[post("/offramp/init-disburse")]
+pub async fn init_disburse_payment_handler(
+    app_state: web::Data<AppState>,
+    request: web::Json<InitDisbursementRequest>,
+    auth: jwt_auth::JwtMiddleware
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    let reference = format!("{}-{}", Uuid::new_v4().to_string(), user_id);
+
+    log::info!(
+        "Initializing disbursement for user: {}, reference: {}",
+        user_id,
+        reference
+    );
+
+    let banks = match fetch_banks_via_paystack(&app_state).await {
+        Ok(banks) => banks,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(InitDisbursementResponse {
+                success: false,
+                message: "Failed to fetch banks".to_string(),
+                reference,
+                data: None,
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+
+    let bank_code = banks.iter()
+        .find(|bank| bank.name.to_lowercase() == request.bank_name.to_lowercase())
+        .map(|bank| bank.code.clone());
+
+    let bank_code = match bank_code {
+        Some(code) => code,
+        None => {
+            return HttpResponse::InternalServerError().json(InitDisbursementResponse {
+                success: false,
+                message: "Bank not found".to_string(),
+                reference,
+                data: None,
+                error: Some(format!("Bank '{}' not found", request.bank_name)),
+            });
+        }
+    };
+
+     match verify_account_via_paystack(&app_state, &request.account_number, &bank_code)
+        .await {
+            Ok(account_details) => {
+                let crypto_amount = request.crypto_transaction.amount;
+                let crypto_symbol = request.crypto_transaction.token_symbol.clone();
+
+                let pending_disbursement = PendingDisbursement {
+                    user_id,
+                    amount: request.amount,
+                    bank_code: bank_code.clone(),
+                    bank_name: request.bank_name.clone(),
+                    account_number: request.account_number.clone(),
+                    account_name: account_details.account_name.clone(),
+                    currency: request.currency.clone(),
+                    crypto_amount,
+                    crypto_symbol,
+                    crypto_tx_hash: request.crypto_transaction.tx_hash.clone()
+                };
+
+                if let Err(e) = store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement).await {
+                    return HttpResponse::InternalServerError().json(InitDisbursementResponse {
+                        success: false,
+                        message: "Failed to store pending disbursement".to_string(),
+                        reference,
+                        data: None,
+                        error: Some(e.to_string()),
+                    });
+                }
+
+                HttpResponse::Ok().json(InitDisbursementResponse {
+                    success: true,
+                    message: "Payment initialized, please confirm to proceed".to_string(),
+                    reference,
+                    data: Some(DisbursementDetails {
+                        account_name: account_details.account_name,
+                        account_number: request.account_number.clone(),
+                        bank_name: request.bank_name.clone(),
+                        bank_code: bank_code.clone(),
+                        amount: request.amount,
+                        currency: request.currency.clone(),
+                        crypto_tx_hash: request.crypto_transaction.tx_hash.clone()
+                    }),
+                    error: None
+                })
+            },
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(InitDisbursementResponse  {
+                    success: false,
+                    message: "Bank account verification failed".to_string(),
+                    reference,
+                    data: None,
+                    error: Some(e),
+                });
+            }
+        }
+}
+
+
+#[post("/offramp/confirm-disburse")]
+
+
+/*
+let narration = Some("Service");
+        match disburse_payment(&app_state, &transaction_ref, request.amount, narration, &bank_code, &request.account_number, &request.currency).await {
+            Ok(disbursement) => {
+
+
+                HttpResponse::Ok().json(PaymentResult {
+                    success: true,
+                    reference: transaction_ref,
+                    transaction_ref: Some(disbursement.transaction_reference),
+                    status: Some(disbursement.status),
+                    message: "Payment disbursement initiated successfully".to_string(),
+                    error: None
+                })
+            },
+            Err(e) => {
+                HttpResponse::InternalServerError().json(PaymentResult {
+                    success: false,
+                    reference: transaction_ref,
+                    transaction_ref: None,
+                    status: None,
+                    message: "Payment disbursement failed".to_string(),
+                    error: Some(e),
+                })
+            }
+        }
+
+*/
 
 /*
 TODO after MVP is completed

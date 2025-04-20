@@ -1,7 +1,9 @@
 use actix_web::web;
 
 use crate::routes::routes::{
-    create_user_handler, fetch_banks_handler, get_transaction_handler, get_user_handler, get_user_logs_handler, get_wallet_handler, request_otp_handler, update_transaction_handler, update_user_wallet_handler, validate_otp_handler, verify_bank_account_handler
+    create_user_handler, fetch_banks_handler, get_transaction_handler, get_user_handler,
+    get_user_logs_handler, get_wallet_handler, request_otp_handler, update_transaction_handler,
+    update_user_wallet_handler, validate_otp_handler, verify_bank_account_handler,
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {

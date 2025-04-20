@@ -1,10 +1,10 @@
 mod auth;
 mod config;
+mod integrations;
 mod middleware;
 mod models;
 mod routes;
 mod service;
-mod integrations;
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use actix_web::{
     middleware::{from_fn, Logger},
     web, App, HttpServer,
 };
-use config::{config::Config, config_scope};
+use config::{config::Config, config_scope, redis_config::{init_redis_pool, RedisPool}};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use service::geolocation::geolocator::GeoLocator;
@@ -23,6 +23,7 @@ use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 pub struct AppState {
     db: Pool<Postgres>,
     env: Config,
+    pub redis_pool: RedisPool,
     pub geo_locator: GeoLocator,
 }
 
@@ -52,6 +53,10 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    let redis_pool = init_redis_pool(&config.redis_url)
+        .await
+        .expect("Failed to create Redis pool");
+
     println!("Server started successfully...");
 
     let geo_locator = GeoLocator::new(config.ip_info_token.clone());
@@ -71,6 +76,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::from(Arc::new(AppState {
                 db: pool.clone(),
                 env: config.clone(),
+                redis_pool: redis_pool.clone(),
                 geo_locator: geo_locator.clone(),
             })))
             .configure(config_scope::config)

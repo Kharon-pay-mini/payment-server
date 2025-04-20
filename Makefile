@@ -22,6 +22,11 @@ install:
 	# cargo add futures
 	cargo add futures-util
 	cargo add actix-web-lab
+	cargo add base64
+	cargo add log 
+	cargo add redis --features "tokio-comp"
+	cargo add bb8
+	cargo add bb8-redis
 	cargo install cargo-watch
 
 
