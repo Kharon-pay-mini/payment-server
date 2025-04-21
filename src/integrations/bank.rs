@@ -1,6 +1,5 @@
 use super::model::{
-    AccountVerificationResponse, Bank, BankApiResponse, DisbursementResponse, DisbursementSchema,
-    MonnifyAuthResponse, MonnifyResponse, PendingDisbursement,
+    AccountVerificationResponse, Bank, BankApiResponse, DisbursementSchema, MonnifyAuthResponse, MonnifyDisbursementResponseBody, MonnifyResponse, PendingDisbursement,
 };
 use crate::AppState;
 use actix_web::{web, Result};
@@ -107,15 +106,12 @@ pub async fn get_monnify_auth_token(app_state: &web::Data<AppState>) -> Result<S
 
     match response.status().is_success() {
         true => {
-            let auth_response: MonnifyResponse<MonnifyAuthResponse> = response
+            let auth_response: MonnifyAuthResponse = response
                 .json()
                 .await
                 .map_err(|e| format!("Failed to parse auth response: {}", e))?;
 
-            match auth_response.status {
-                true => Ok(auth_response.data.access_token),
-                false => Err(format!("Monnify auth error: {}", auth_response.message)),
-            }
+            Ok(auth_response.response_body.access_token)
         }
         false => {
             let status = response.status();
@@ -136,19 +132,23 @@ pub async fn disburse_payment(
     bank_code: &str,
     account_number: &str,
     currency: &str,
-) -> Result<DisbursementResponse, String> {
+) -> Result<MonnifyDisbursementResponseBody, String> {
     let auth_token = get_monnify_auth_token(app_state).await?;
 
+    let monnify_reference = if reference.len() > 64 {
+        reference[0..64].to_string()
+    } else {
+        reference.to_string()
+    };
+
     let disbursement_request = DisbursementSchema {
-        reference: reference.to_string(),
         amount,
-        currency: currency.to_string(),
+        reference: monnify_reference,
+        narration: narration.map(|n| n.to_string()),
         destination_bank_code: bank_code.to_string(),
         destination_account_number: account_number.to_string(),
+        currency: currency.to_string(),
         source_account_number: app_state.env.monnify_wallet_account_number.clone(),
-        wallet_id: app_state.env.monnify_contract_code.clone(),
-        from_available_balance: true,
-        narration: narration.map(|n| n.to_string()),
     };
 
     let client = reqwest::Client::new();
@@ -163,19 +163,26 @@ pub async fn disburse_payment(
 
     match response.status().is_success() {
         true => {
-            let disbursement_response: MonnifyResponse<DisbursementResponse> = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse disbursement response: {}", e))?;
+           let raw_body = response.text().await
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-            match disbursement_response.status {
-                true => Ok(disbursement_response.data),
-                false => Err(format!(
-                    "Disbursement error: {}",
-                    disbursement_response.message
-                )),
+        log::info!("Raw disbursement response: {}", raw_body);
+
+        match serde_json::from_str::<MonnifyResponse>(&raw_body) {
+            Ok(disbursement_response) => {
+                if disbursement_response.request_successful {
+                    Ok(disbursement_response.response_body)
+                } else {
+                    Err(format!(
+                        "Disbursement error: {} (code: {})",
+                        disbursement_response.response_message,
+                        disbursement_response.response_code
+                    ))
+                }
             }
+            Err(e) => Err(format!("Failed to parse disbursement response: {}", e)),
         }
+    }
         false => {
             let status = response.status();
             let error_message = response.text().await.unwrap_or_default();

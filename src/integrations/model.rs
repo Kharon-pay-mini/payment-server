@@ -29,16 +29,34 @@ pub struct BankApiResponse<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MonnifyResponse<T> {
-    pub status: bool,
-    pub message: String,
-    pub code: String,
-    pub data: T,
+pub struct MonnifyResponse {
+    #[serde(rename = "requestSuccessful")]
+    pub request_successful: bool,
+    #[serde(rename = "responseMessage")]
+    pub response_message: String,
+    #[serde(rename = "responseCode")]
+    pub response_code: String,
+    #[serde(rename = "responseBody")]
+    pub response_body: MonnifyDisbursementResponseBody,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MonnifyAuthResponse {
+    #[serde(rename = "requestSuccessful")]
+    pub request_successful: bool,
+    #[serde(rename = "responseMessage")]
+    pub response_message: String,
+    #[serde(rename = "responseCode")]
+    pub response_code: String,
+    #[serde(rename = "responseBody")]
+    pub response_body: MonnifyAuthResponseBody,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MonnifyAuthResponseBody {
+    #[serde(rename = "accessToken")]
     pub access_token: String,
+    #[serde(rename = "expiresIn")]
     pub expires_in: i64,
 }
 
@@ -85,10 +103,29 @@ pub struct PendingDisbursement {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DisbursementResponse {
-    pub transaction_reference: String,
-    pub payment_reference: String,
+pub struct MonnifyDisbursementResponseBody {
+    pub amount: f64,
+    pub reference: String,
     pub status: String,
+    #[serde(rename = "dateCreated")]
+    pub date_created: String,
+    #[serde(rename = "totalFee")]
+    pub total_fee: f64,
+    #[serde(rename = "destinationAccountName")]
+    #[serde(default)]
+    pub destination_account_name: Option<String>,
+    
+    #[serde(rename = "destinationBankName")]
+    #[serde(default)]
+    pub destination_bank_name: Option<String>,
+    
+    #[serde(rename = "destinationAccountNumber")]
+    #[serde(default)]
+    pub destination_account_number: Option<String>,
+    
+    #[serde(rename = "destinationBankCode")]
+    #[serde(default)]
+    pub destination_bank_code: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,15 +147,16 @@ pub struct BankVerificationSchema {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DisbursementSchema {
-    pub reference: String,
     pub amount: f64,
-    pub currency: String,
-    pub destination_bank_code: String,
-    pub destination_account_number: String,
-    pub source_account_number: String,
-    pub wallet_id: String,
-    pub from_available_balance: bool,
+    pub reference: String,
     pub narration: Option<String>,
+    #[serde(rename = "destinationBankCode")]
+    pub destination_bank_code: String,
+    #[serde(rename = "destinationAccountNumber")]
+    pub destination_account_number: String,
+    pub currency: String,
+    #[serde(rename = "sourceAccountNumber")]
+    pub source_account_number: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

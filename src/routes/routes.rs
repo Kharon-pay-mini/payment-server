@@ -764,7 +764,7 @@ pub async fn init_disburse_payment_handler(
 ) -> impl Responder {
     let user_id = auth.user_id;
 
-    let reference = format!("{}-{}", Uuid::new_v4().to_string(), user_id);
+    let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
 
     log::info!(
         "Initializing disbursement for user: {}, reference: {}",
@@ -941,12 +941,14 @@ pub async fn confirm_disburse_payment_handler(
                 log::warn!("Failed to delete pending disbursement from Redis: {}", e);
             }
 
+            //      TODO: SEND CONFIRMATION EMAIL TO USER WITH NECESSARY DETAILS
+
             HttpResponse::Ok().json(PaymentResult {
                 success: true,
                 reference: request.reference.clone(),
-                transaction_ref: Some(disbursement.transaction_reference),
+                transaction_ref: Some(disbursement.reference),
                 status: Some(disbursement.status),
-                message: "Payment disbursement processed successfully".to_string(),
+                message: "Payment completed successfully".to_string(),
                 error: None,
             })
         }
