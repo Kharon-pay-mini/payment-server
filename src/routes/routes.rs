@@ -906,7 +906,7 @@ pub async fn confirm_disburse_payment_handler(
     .await
     {
         Ok(disbursement) => {
-            // save to DB
+            let payment_status = disbursement.status.clone();
             let transaction_result = sqlx::query_as::<_, Transactions>(
                 r#"
                     INSERT INTO transactions (
@@ -925,7 +925,7 @@ pub async fn confirm_disburse_payment_handler(
             .bind(&pending_disbursement.amount)
             .bind(&pending_disbursement.currency.clone())
             .bind(&pending_disbursement.payment_method.clone())
-            .bind("BANK TRANSFER")
+            .bind(&payment_status)
             .bind(&pending_disbursement.crypto_tx_hash.clone())
             .fetch_optional(&app_state.db)
             .await;

@@ -40,7 +40,6 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let config = Config::init();
-    println!("Database URL: {}", config.database_url);
 
     let pool = match PgPoolOptions::new()
         .max_connections(10)
