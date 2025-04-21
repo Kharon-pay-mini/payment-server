@@ -25,16 +25,16 @@ impl Config {
             std::env::var("PAYSTACK_SECRET_KEY").expect("PAYSTACK_SECRET_KEY must be set");
         let paystack_public_key =
             std::env::var("PAYSTACK_PUBLIC_KEY").expect("PAYSTACK_PUBLIC_KEY must be set");
-        let monnify_secret_key = 
+        let monnify_secret_key =
             std::env::var("MONNIFY_SECRET_KEY").expect("MONNIFY_SECRET_KEY must be set");
-        let monnify_api_key = 
+        let monnify_api_key =
             std::env::var("MONNIFY_API_KEY").expect("MONNIFY_API_KEY must be set");
-        let monnify_wallet_account_number =
-            std::env::var("MONNIFY_WALLET_ACCOUNT_NUMBER").expect("MONNIFY_WALLET_ACCOUNT_NUMBER must be set");
+        let monnify_wallet_account_number = std::env::var("MONNIFY_WALLET_ACCOUNT_NUMBER")
+            .expect("MONNIFY_WALLET_ACCOUNT_NUMBER must be set");
         let monnify_contract_code =
             std::env::var("MONNIFY_CONTRACT_CODE").expect("MONNIFY_CONTRACT_CODE must be set");
         let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
-        
+
         Config {
             database_url,
             jwt_secret,
@@ -47,7 +47,7 @@ impl Config {
             monnify_api_key,
             monnify_wallet_account_number,
             monnify_contract_code,
-            redis_url
+            redis_url,
         }
     }
 }

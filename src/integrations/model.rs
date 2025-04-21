@@ -54,7 +54,7 @@ pub struct InitDisbursementResponse {
     pub message: String,
     pub reference: String,
     pub data: Option<DisbursementDetails>,
-    pub error: Option<String>
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +79,8 @@ pub struct PendingDisbursement {
     pub currency: String,
     pub crypto_amount: f64,
     pub crypto_symbol: String,
+    pub order_type: String,
+    pub payment_method: String,
     pub crypto_tx_hash: String,
 }
 
@@ -99,7 +101,6 @@ pub struct PaymentResult {
     pub error: Option<String>,
 }
 
-
 //  SCHEMAS //
 #[derive(Debug, Deserialize)]
 pub struct BankVerificationSchema {
@@ -117,7 +118,7 @@ pub struct DisbursementSchema {
     pub source_account_number: String,
     pub wallet_id: String,
     pub from_available_balance: bool,
-    pub narration: Option<String>
+    pub narration: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,7 +128,7 @@ pub struct OfframpRequest {
     pub bank_name: String,
     pub account_number: String,
     pub destination_account_number: String,
-    pub currency: String
+    pub currency: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -137,9 +138,11 @@ pub struct InitDisbursementRequest {
     pub bank_name: String,
     pub account_number: String,
     pub currency: String,
+    pub order_type: String,
+    pub payment_method: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfirmDisbursementRequest {
-    pub reference: String
+    pub reference: String,
 }

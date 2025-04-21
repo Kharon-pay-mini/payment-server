@@ -251,7 +251,8 @@ pub async fn delete_pending_disbursement(
 
     let key = format!("pending disbursement:{}:{}", reference, user_id);
 
-    redis_conn.del::<&str, ()>(&key)
+    redis_conn
+        .del::<&str, ()>(&key)
         .await
         .map_err(|e| format!("Failed to delete pending disbursement: {}", e))?;
 

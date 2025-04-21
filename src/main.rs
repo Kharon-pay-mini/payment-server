@@ -14,7 +14,11 @@ use actix_web::{
     middleware::{from_fn, Logger},
     web, App, HttpServer,
 };
-use config::{config::Config, config_scope, redis_config::{init_redis_pool, RedisPool}};
+use config::{
+    config::Config,
+    config_scope,
+    redis_config::{init_redis_pool, RedisPool},
+};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use service::geolocation::geolocator::GeoLocator;
