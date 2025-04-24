@@ -41,6 +41,10 @@ pub struct Transactions {
     pub payment_method: String,
     pub payment_status: String,
     pub tx_hash: String,
+    pub reference: String,
+    pub settlement_status: Option<String>,
+    pub transaction_reference: Option<String>,
+    pub settlement_date: Option<DateTime<Utc>>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]

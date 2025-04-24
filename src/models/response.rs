@@ -54,7 +54,11 @@ pub struct FilteredTransaction {
     pub fiat_currency: String,
     pub payment_method: String,
     pub payment_status: String,
-    pub t_hash: String,
+    pub tx_hash: String,
+    pub reference: String,
+    pub settlement_status: Option<String>,
+    pub transaction_reference: Option<String>,
+    pub settlement_date: Option<DateTime<Utc>>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
@@ -65,13 +69,6 @@ pub struct FilteredTransaction {
 pub struct TransactionData {
     pub tx: FilteredTransaction,
 }
-
-/*
-#[derive(Debug, Serialize)]
-pub struct TransactionResponse {
-    status: String,
-    pub data: TransactionData
-} */
 
 #[derive(Debug, Serialize)]
 pub struct FilteredUserSecurityLogs {
@@ -90,13 +87,6 @@ pub struct FilteredUserSecurityLogs {
 pub struct UserSecurityLogsData {
     pub user_security_log: FilteredUserSecurityLogs,
 }
-
-/*
-#[derive(Debug, Serialize)]
-pub struct UserSecurityLogsResponse {
-    status: String,
-    pub data: UserSecurityLogsData
-} */
 
 #[derive(Debug, Serialize)]
 pub struct FilteredOtp {

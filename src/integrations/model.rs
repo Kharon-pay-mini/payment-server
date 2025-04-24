@@ -111,21 +111,40 @@ pub struct MonnifyDisbursementResponseBody {
     pub date_created: String,
     #[serde(rename = "totalFee")]
     pub total_fee: f64,
-    #[serde(rename = "destinationAccountName")]
-    #[serde(default)]
+    #[serde(rename = "destinationAccountName", default)]
     pub destination_account_name: Option<String>,
-    
-    #[serde(rename = "destinationBankName")]
-    #[serde(default)]
+
+    #[serde(rename = "destinationBankName", default)]
     pub destination_bank_name: Option<String>,
-    
-    #[serde(rename = "destinationAccountNumber")]
-    #[serde(default)]
+
+    #[serde(rename = "destinationAccountNumber", default)]
     pub destination_account_number: Option<String>,
-    
-    #[serde(rename = "destinationBankCode")]
-    #[serde(default)]
+
+    #[serde(rename = "destinationBankCode", default)]
     pub destination_bank_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MonnifyEventData {
+    #[serde(rename = "transactionReference")]
+    pub transaction_reference: String,
+    pub reference: String,
+    pub status: String,
+    pub amount: f64,
+    #[serde(rename = "destinationAccountNumber", default)]
+    pub destination_account_number: Option<String>,
+    #[serde(rename = "destinationBankCode", default)]
+    pub destination_bank_code: Option<String>,
+    #[serde(rename = "destinationAccountName", default)]
+    pub destination_account_name: Option<String>,
+    #[serde(rename = "paymentReference", default)]
+    pub payment_reference: Option<String>,
+    #[serde(rename = "statusMessage", default)]
+    pub status_message: Option<String>,
+    #[serde(rename = "completedOn", default)]
+    pub completed_on: Option<String>,
+    #[serde(rename = "paymentMethod", default)]
+    pub payment_method: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -183,4 +202,12 @@ pub struct InitDisbursementRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfirmDisbursementRequest {
     pub reference: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MonnifyWebhookPayload {
+    #[serde(rename = "eventType")]
+    pub event_type: String,
+    #[serde(rename = "eventData")]
+    pub event_data: MonnifyEventData,
 }

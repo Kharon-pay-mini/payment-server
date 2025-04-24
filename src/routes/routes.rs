@@ -2,9 +2,11 @@ use actix_web::{
     cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
+use awc::body;
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use rand::{rng, Rng};
+use redis::AsyncCommands;
 use serde_json::json;
 use sqlx::Row;
 use std::{time::Duration, usize};
@@ -15,12 +17,13 @@ use crate::{
     integrations::{
         bank::{
             delete_pending_disbursement, disburse_payment, fetch_banks_via_paystack,
-            retrieve_pending_disbursement, store_pending_disbursement, verify_account_via_paystack,
+            process_monnify_webhook, retrieve_pending_disbursement, store_pending_disbursement,
+            verify_account_via_paystack, verify_monnify_webhook_signature,
         },
         model::{
             BankVerificationSchema, ConfirmDisbursementRequest, DisbursementDetails,
-            InitDisbursementRequest, InitDisbursementResponse, OfframpRequest, PaymentResult,
-            PendingDisbursement,
+            InitDisbursementRequest, InitDisbursementResponse, MonnifyWebhookPayload,
+            OfframpRequest, PaymentResult, PendingDisbursement,
         },
     },
     models::{
@@ -76,7 +79,11 @@ fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransactio
         fiat_currency: transaction.fiat_currency.to_string(),
         payment_method: transaction.payment_method.clone(),
         payment_status: transaction.payment_status.clone(),
-        t_hash: transaction.tx_hash.to_string(),
+        tx_hash: transaction.tx_hash.to_string(),
+        reference: transaction.reference.to_string(),
+        settlement_status: transaction.settlement_status.clone(),
+        transaction_reference: transaction.transaction_reference.clone(),
+        settlement_date: transaction.settlement_date,
         created_at: transaction.created_at,
         updated_at: transaction.updated_at.unwrap_or_else(|| Utc::now()),
     }
@@ -579,7 +586,8 @@ async fn get_transaction_handler(
         "SELECT 
             tx_id, user_id, order_type, crypto_amount, crypto_type, 
             fiat_amount, fiat_currency, payment_method, payment_status, tx_hash, 
-            created_at, updated_at 
+            reference, settlement_status, transaction_reference, 
+            settlement_date, created_at, updated_at 
             FROM transactions WHERE user_id = $1",
         user_id
     )
@@ -907,18 +915,20 @@ pub async fn confirm_disburse_payment_handler(
     {
         Ok(disbursement) => {
             let payment_status = disbursement.status.clone();
+            let monnify_reference = disbursement.reference.clone();
             let transaction_result = sqlx::query_as::<_, Transactions>(
                 r#"
                     INSERT INTO transactions (
-                        user_id, order_type, crypto_amount, crypto_type,
+                        user_id, created_at, order_type, crypto_amount, crypto_type,
                         fiat_amount, fiat_currency, payment_method, payment_status,
                         tx_hash
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING *
                     "#,
             )
             .bind(&user_id)
+            .bind(Utc::now())
             .bind(&pending_disbursement.order_type.clone())
             .bind(&pending_disbursement.crypto_amount)
             .bind(&pending_disbursement.crypto_symbol.clone())
@@ -927,6 +937,7 @@ pub async fn confirm_disburse_payment_handler(
             .bind(&pending_disbursement.payment_method.clone())
             .bind(&payment_status)
             .bind(&pending_disbursement.crypto_tx_hash.clone())
+            .bind(&monnify_reference)
             .fetch_optional(&app_state.db)
             .await;
 
@@ -935,11 +946,19 @@ pub async fn confirm_disburse_payment_handler(
                 Err(e) => log::error!("Failed to save transaction to DB: {}", e),
             }
 
-            if let Err(e) =
-                delete_pending_disbursement(&app_state, &request.reference, user_id).await
-            {
-                log::warn!("Failed to delete pending disbursement from Redis: {}", e);
-            }
+            let mut redis_conn = match app_state.redis_pool.get().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    log::error!("Failed to get Redis connection: {}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to get Redis connection"
+                    }));
+                }
+            };
+
+            let key = format!("pending disbursement:{}:{}", request.reference, user_id);
+            let _: Result<(), _> = redis_conn.expire(&key, 86400).await;
 
             //      TODO: SEND CONFIRMATION EMAIL TO USER WITH NECESSARY DETAILS
 
@@ -948,7 +967,7 @@ pub async fn confirm_disburse_payment_handler(
                 reference: request.reference.clone(),
                 transaction_ref: Some(disbursement.reference),
                 status: Some(disbursement.status),
-                message: "Payment completed successfully".to_string(),
+                message: "Payment initiated".to_string(),
                 error: None,
             })
         }
@@ -960,6 +979,44 @@ pub async fn confirm_disburse_payment_handler(
             message: "Payment disbursement failed".to_string(),
             error: Some(e),
         }),
+    }
+}
+
+//   https://58a2-102-88-111-90.ngrok-free.app/api/webhooks/monnify
+
+#[post("/webhooks/monnify")]
+pub async fn monnify_webhook_handler(
+    app_state: web::Data<AppState>,
+    body: web::Bytes,
+    req: HttpRequest,
+) -> impl Responder {
+    log::info!("Received Monnify webhook: {:?}", body);
+
+    if !verify_monnify_webhook_signature(&req, &body, &app_state.env.monnify_secret_key) {
+        log::warn!("Invalid Monnify webhook signature received");
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    let payload: MonnifyWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(e) => {
+            log::error!("Failed to parse Monnify webhook payload: {}", e);
+            return HttpResponse::BadRequest().body(format!("Invalid payload: {}", e));
+        }
+    };
+
+    log::info!(
+        "Processing webhook: event_type={}, reference={}",
+        payload.event_type,
+        payload.event_data.reference
+    );
+
+    match process_monnify_webhook(&app_state, payload).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            log::error!("Failed to process Monnify webhook: {}", e);
+            HttpResponse::InternalServerError().body(format!("Error processing webhook: {}", e))
+        }
     }
 }
 
