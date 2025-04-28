@@ -2,19 +2,29 @@ use actix_web::{
     cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
+use awc::body;
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use rand::{rng, Rng};
+use redis::AsyncCommands;
 use serde_json::json;
 use sqlx::Row;
-use uuid::Uuid;
 use std::{time::Duration, usize};
+use uuid::Uuid;
 
 use crate::{
     auth::jwt_auth,
     integrations::{
-        bank::{disburse_payment, fetch_banks_via_paystack, store_pending_disbursement, verify_account_via_paystack},
-        model::{BankVerificationSchema, DisbursementDetails, InitDisbursementRequest, InitDisbursementResponse, OfframpRequest, PaymentResult, PendingDisbursement},
+        bank::{
+            delete_pending_disbursement, disburse_payment, fetch_banks_via_paystack,
+            process_monnify_webhook, retrieve_pending_disbursement, store_pending_disbursement,
+            verify_account_via_paystack, verify_monnify_webhook_signature,
+        },
+        model::{
+            BankVerificationSchema, ConfirmDisbursementRequest, DisbursementDetails,
+            InitDisbursementRequest, InitDisbursementResponse, MonnifyWebhookPayload,
+            OfframpRequest, PaymentResult, PendingDisbursement,
+        },
     },
     models::{
         models::{
@@ -69,7 +79,11 @@ fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransactio
         fiat_currency: transaction.fiat_currency.to_string(),
         payment_method: transaction.payment_method.clone(),
         payment_status: transaction.payment_status.clone(),
-        t_hash: transaction.tx_hash.to_string(),
+        tx_hash: transaction.tx_hash.to_string(),
+        reference: transaction.reference.to_string(),
+        settlement_status: transaction.settlement_status.clone(),
+        transaction_reference: transaction.transaction_reference.clone(),
+        settlement_date: transaction.settlement_date,
         created_at: transaction.created_at,
         updated_at: transaction.updated_at.unwrap_or_else(|| Utc::now()),
     }
@@ -572,7 +586,8 @@ async fn get_transaction_handler(
         "SELECT 
             tx_id, user_id, order_type, crypto_amount, crypto_type, 
             fiat_amount, fiat_currency, payment_method, payment_status, tx_hash, 
-            created_at, updated_at 
+            reference, settlement_status, transaction_reference, 
+            settlement_date, created_at, updated_at 
             FROM transactions WHERE user_id = $1",
         user_id
     )
@@ -753,11 +768,11 @@ pub async fn verify_bank_account_handler(
 pub async fn init_disburse_payment_handler(
     app_state: web::Data<AppState>,
     request: web::Json<InitDisbursementRequest>,
-    auth: jwt_auth::JwtMiddleware
+    auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
 
-    let reference = format!("{}-{}", Uuid::new_v4().to_string(), user_id);
+    let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
 
     log::info!(
         "Initializing disbursement for user: {}, reference: {}",
@@ -778,8 +793,8 @@ pub async fn init_disburse_payment_handler(
         }
     };
 
-
-    let bank_code = banks.iter()
+    let bank_code = banks
+        .iter()
         .find(|bank| bank.name.to_lowercase() == request.bank_name.to_lowercase())
         .map(|bank| bank.code.clone());
 
@@ -796,95 +811,214 @@ pub async fn init_disburse_payment_handler(
         }
     };
 
-     match verify_account_via_paystack(&app_state, &request.account_number, &bank_code)
-        .await {
-            Ok(account_details) => {
-                let crypto_amount = request.crypto_transaction.amount;
-                let crypto_symbol = request.crypto_transaction.token_symbol.clone();
+    match verify_account_via_paystack(&app_state, &request.account_number, &bank_code).await {
+        Ok(account_details) => {
+            let crypto_amount = request.crypto_transaction.amount;
+            let crypto_symbol = request.crypto_transaction.token_symbol.clone();
 
-                let pending_disbursement = PendingDisbursement {
-                    user_id,
-                    amount: request.amount,
-                    bank_code: bank_code.clone(),
-                    bank_name: request.bank_name.clone(),
-                    account_number: request.account_number.clone(),
-                    account_name: account_details.account_name.clone(),
-                    currency: request.currency.clone(),
-                    crypto_amount,
-                    crypto_symbol,
-                    crypto_tx_hash: request.crypto_transaction.tx_hash.clone()
-                };
+            let pending_disbursement = PendingDisbursement {
+                user_id,
+                amount: request.amount,
+                bank_code: bank_code.clone(),
+                bank_name: request.bank_name.clone(),
+                account_number: request.account_number.clone(),
+                account_name: account_details.account_name.clone(),
+                currency: request.currency.clone(),
+                crypto_amount,
+                crypto_symbol,
+                order_type: request.order_type.clone(),
+                payment_method: request.payment_method.clone(),
+                crypto_tx_hash: request.crypto_transaction.tx_hash.clone(),
+            };
 
-                if let Err(e) = store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement).await {
-                    return HttpResponse::InternalServerError().json(InitDisbursementResponse {
-                        success: false,
-                        message: "Failed to store pending disbursement".to_string(),
-                        reference,
-                        data: None,
-                        error: Some(e.to_string()),
-                    });
-                }
-
-                HttpResponse::Ok().json(InitDisbursementResponse {
-                    success: true,
-                    message: "Payment initialized, please confirm to proceed".to_string(),
-                    reference,
-                    data: Some(DisbursementDetails {
-                        account_name: account_details.account_name,
-                        account_number: request.account_number.clone(),
-                        bank_name: request.bank_name.clone(),
-                        bank_code: bank_code.clone(),
-                        amount: request.amount,
-                        currency: request.currency.clone(),
-                        crypto_tx_hash: request.crypto_transaction.tx_hash.clone()
-                    }),
-                    error: None
-                })
-            },
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(InitDisbursementResponse  {
+            if let Err(e) =
+                store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement)
+                    .await
+            {
+                return HttpResponse::InternalServerError().json(InitDisbursementResponse {
                     success: false,
-                    message: "Bank account verification failed".to_string(),
+                    message: "Failed to store pending disbursement".to_string(),
                     reference,
                     data: None,
+                    error: Some(e.to_string()),
+                });
+            }
+
+            HttpResponse::Ok().json(InitDisbursementResponse {
+                success: true,
+                message: "Payment initialized, please confirm to proceed".to_string(),
+                reference,
+                data: Some(DisbursementDetails {
+                    account_name: account_details.account_name,
+                    account_number: request.account_number.clone(),
+                    bank_name: request.bank_name.clone(),
+                    bank_code: bank_code.clone(),
+                    amount: request.amount,
+                    currency: request.currency.clone(),
+                    crypto_tx_hash: request.crypto_transaction.tx_hash.clone(),
+                }),
+                error: None,
+            })
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(InitDisbursementResponse {
+                success: false,
+                message: "Bank account verification failed".to_string(),
+                reference,
+                data: None,
+                error: Some(e),
+            });
+        }
+    }
+}
+
+#[post("/offramp/confirm-disburse")]
+pub async fn confirm_disburse_payment_handler(
+    app_state: web::Data<AppState>,
+    request: web::Json<ConfirmDisbursementRequest>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    log::info!(
+        "Confirming disbursement for user {}, reference: {}",
+        user_id,
+        request.reference
+    );
+
+    let pending_disbursement =
+        match retrieve_pending_disbursement(&app_state, &request.reference, user_id).await {
+            Ok(disbursement) => disbursement,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(PaymentResult {
+                    success: false,
+                    reference: request.reference.clone(),
+                    transaction_ref: None,
+                    status: None,
+                    message: "Failed to retrieve pending disbursement".to_string(),
                     error: Some(e),
                 });
             }
+        };
+
+    let narration = Some("Service charge");
+    match disburse_payment(
+        &app_state,
+        &request.reference,
+        pending_disbursement.amount,
+        narration,
+        &pending_disbursement.bank_code,
+        &pending_disbursement.account_number,
+        &pending_disbursement.currency,
+    )
+    .await
+    {
+        Ok(disbursement) => {
+            let payment_status = disbursement.status.clone();
+            let monnify_reference = disbursement.reference.clone();
+            let transaction_result = sqlx::query_as::<_, Transactions>(
+                r#"
+                    INSERT INTO transactions (
+                        user_id, created_at, order_type, crypto_amount, crypto_type,
+                        fiat_amount, fiat_currency, payment_method, payment_status,
+                        tx_hash
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    RETURNING *
+                    "#,
+            )
+            .bind(&user_id)
+            .bind(Utc::now())
+            .bind(&pending_disbursement.order_type.clone())
+            .bind(&pending_disbursement.crypto_amount)
+            .bind(&pending_disbursement.crypto_symbol.clone())
+            .bind(&pending_disbursement.amount)
+            .bind(&pending_disbursement.currency.clone())
+            .bind(&pending_disbursement.payment_method.clone())
+            .bind(&payment_status)
+            .bind(&pending_disbursement.crypto_tx_hash.clone())
+            .bind(&monnify_reference)
+            .fetch_optional(&app_state.db)
+            .await;
+
+            match &transaction_result {
+                Ok(tx) => log::info!("Transaction saved successfully: {:?}", tx),
+                Err(e) => log::error!("Failed to save transaction to DB: {}", e),
+            }
+
+            let mut redis_conn = match app_state.redis_pool.get().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    log::error!("Failed to get Redis connection: {}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to get Redis connection"
+                    }));
+                }
+            };
+
+            let key = format!("pending disbursement:{}:{}", request.reference, user_id);
+            let _: Result<(), _> = redis_conn.expire(&key, 86400).await;
+
+            //      TODO: SEND CONFIRMATION EMAIL TO USER WITH NECESSARY DETAILS
+
+            HttpResponse::Ok().json(PaymentResult {
+                success: true,
+                reference: request.reference.clone(),
+                transaction_ref: Some(disbursement.reference),
+                status: Some(disbursement.status),
+                message: "Payment initiated".to_string(),
+                error: None,
+            })
         }
+        Err(e) => HttpResponse::InternalServerError().json(PaymentResult {
+            success: false,
+            reference: request.reference.clone(),
+            transaction_ref: None,
+            status: None,
+            message: "Payment disbursement failed".to_string(),
+            error: Some(e),
+        }),
+    }
 }
 
+//   https://58a2-102-88-111-90.ngrok-free.app/api/webhooks/monnify
 
-#[post("/offramp/confirm-disburse")]
+#[post("/webhooks/monnify")]
+pub async fn monnify_webhook_handler(
+    app_state: web::Data<AppState>,
+    body: web::Bytes,
+    req: HttpRequest,
+) -> impl Responder {
+    log::info!("Received Monnify webhook: {:?}", body);
 
+    if !verify_monnify_webhook_signature(&req, &body, &app_state.env.monnify_secret_key) {
+        log::warn!("Invalid Monnify webhook signature received");
+        return HttpResponse::Unauthorized().finish();
+    }
 
-/*
-let narration = Some("Service");
-        match disburse_payment(&app_state, &transaction_ref, request.amount, narration, &bank_code, &request.account_number, &request.currency).await {
-            Ok(disbursement) => {
-
-
-                HttpResponse::Ok().json(PaymentResult {
-                    success: true,
-                    reference: transaction_ref,
-                    transaction_ref: Some(disbursement.transaction_reference),
-                    status: Some(disbursement.status),
-                    message: "Payment disbursement initiated successfully".to_string(),
-                    error: None
-                })
-            },
-            Err(e) => {
-                HttpResponse::InternalServerError().json(PaymentResult {
-                    success: false,
-                    reference: transaction_ref,
-                    transaction_ref: None,
-                    status: None,
-                    message: "Payment disbursement failed".to_string(),
-                    error: Some(e),
-                })
-            }
+    let payload: MonnifyWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(e) => {
+            log::error!("Failed to parse Monnify webhook payload: {}", e);
+            return HttpResponse::BadRequest().body(format!("Invalid payload: {}", e));
         }
+    };
 
-*/
+    log::info!(
+        "Processing webhook: event_type={}, reference={}",
+        payload.event_type,
+        payload.event_data.reference
+    );
+
+    match process_monnify_webhook(&app_state, payload).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            log::error!("Failed to process Monnify webhook: {}", e);
+            HttpResponse::InternalServerError().body(format!("Error processing webhook: {}", e))
+        }
+    }
+}
 
 /*
 TODO after MVP is completed

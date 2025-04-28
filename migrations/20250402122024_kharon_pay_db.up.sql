@@ -45,6 +45,10 @@ CREATE TABLE "transactions" (
     payment_method VARCHAR(20) NOT NULL,
     payment_status VARCHAR(20) NOT NULL,
     tx_hash VARCHAR(250) UNIQUE NOT NULL,
+    reference VARCHAR(250) UNIQUE NOT NULL,
+    settlement_status VARCHAR(20) NULL,
+    transaction_reference VARCHAR(250) UNIQUE NULL,
+    settlement_date TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

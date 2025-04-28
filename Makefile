@@ -27,6 +27,9 @@ install:
 	cargo add redis --features "tokio-comp"
 	cargo add bb8
 	cargo add bb8-redis
+	cargo add hmac
+	cargo add sha2
+	cargo add hex
 	cargo install cargo-watch
 
 
