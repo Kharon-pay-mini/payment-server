@@ -88,7 +88,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(from_fn(security_logger_middleware))
     })
-    .bind(("127.0.0.1", port))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }
