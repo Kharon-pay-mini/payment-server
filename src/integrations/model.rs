@@ -99,7 +99,6 @@ pub struct PendingDisbursement {
     pub crypto_symbol: String,
     pub order_type: String,
     pub payment_method: String,
-    pub crypto_tx_hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -197,11 +196,13 @@ pub struct InitDisbursementRequest {
     pub currency: String,
     pub order_type: String,
     pub payment_method: String,
+    pub reference: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfirmDisbursementRequest {
     pub reference: String,
+    pub crypto_tx_hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

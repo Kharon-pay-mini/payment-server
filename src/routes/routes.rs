@@ -772,7 +772,20 @@ pub async fn init_disburse_payment_handler(
 ) -> impl Responder {
     let user_id = auth.user_id;
 
-    let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
+    // let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
+
+    let reference = match Uuid::parse_str(&request.reference) {
+        Ok(uuid) => uuid.to_string(),
+        Err(_) => {
+            return HttpResponse::BadRequest().json(InitDisbursementResponse {
+                success: false,
+                message: "Invalid reference format. Must be a valid UUID".to_string(),
+                reference: request.reference.clone(),
+                data: None,
+                error: Some("Invalid reference format".to_string()),
+            });
+        }
+    };
 
     log::info!(
         "Initializing disbursement for user: {}, reference: {}",
@@ -828,7 +841,6 @@ pub async fn init_disburse_payment_handler(
                 crypto_symbol,
                 order_type: request.order_type.clone(),
                 payment_method: request.payment_method.clone(),
-                crypto_tx_hash: request.crypto_transaction.tx_hash.clone(),
             };
 
             if let Err(e) =
@@ -936,7 +948,7 @@ pub async fn confirm_disburse_payment_handler(
             .bind(&pending_disbursement.currency.clone())
             .bind(&pending_disbursement.payment_method.clone())
             .bind(&payment_status)
-            .bind(&pending_disbursement.crypto_tx_hash.clone())
+            .bind(&request.crypto_tx_hash.clone())
             .bind(&monnify_reference)
             .fetch_optional(&app_state.db)
             .await;
@@ -981,8 +993,6 @@ pub async fn confirm_disburse_payment_handler(
         }),
     }
 }
-
-//   https://58a2-102-88-111-90.ngrok-free.app/api/webhooks/monnify
 
 #[post("/webhooks/monnify")]
 pub async fn monnify_webhook_handler(
