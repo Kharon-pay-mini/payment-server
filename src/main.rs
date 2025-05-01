@@ -63,6 +63,7 @@ async fn main() -> std::io::Result<()> {
     println!("Server started successfully...");
 
     let geo_locator = GeoLocator::new(config.ip_info_token.clone());
+    let port = config.port.parse().expect("PORT must be i16 type");
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -87,7 +88,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(from_fn(security_logger_middleware))
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind(("127.0.0.1", port))?
     .run()
     .await
 }
