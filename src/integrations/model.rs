@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,7 +16,6 @@ pub struct Bank {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CryptoTransaction {
-    pub tx_hash: String,
     pub amount: f64,
     pub token_symbol: String,
 }
@@ -86,10 +86,9 @@ pub struct DisbursementDetails {
     pub crypto_tx_hash: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PendingDisbursement {
     pub user_id: Uuid,
-    pub amount: f64,
     pub bank_code: String,
     pub bank_name: String,
     pub account_number: String,
@@ -99,7 +98,7 @@ pub struct PendingDisbursement {
     pub crypto_symbol: String,
     pub order_type: String,
     pub payment_method: String,
-    pub crypto_tx_hash: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,7 +107,7 @@ pub struct MonnifyDisbursementResponseBody {
     pub reference: String,
     pub status: String,
     #[serde(rename = "dateCreated")]
-    pub date_created: String,
+    pub date_created: DateTime<Utc>,
     #[serde(rename = "totalFee")]
     pub total_fee: f64,
     #[serde(rename = "destinationAccountName", default)]
@@ -166,7 +165,7 @@ pub struct BankVerificationSchema {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DisbursementSchema {
-    pub amount: f64,
+    pub amount: i64,
     pub reference: String,
     pub narration: Option<String>,
     #[serde(rename = "destinationBankCode")]
@@ -179,19 +178,8 @@ pub struct DisbursementSchema {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OfframpRequest {
-    pub crypto_transaction: CryptoTransaction,
-    pub amount: f64,
-    pub bank_name: String,
-    pub account_number: String,
-    pub destination_account_number: String,
-    pub currency: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct InitDisbursementRequest {
     pub crypto_transaction: CryptoTransaction,
-    pub amount: f64,
     pub bank_name: String,
     pub account_number: String,
     pub currency: String,
@@ -201,7 +189,12 @@ pub struct InitDisbursementRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfirmDisbursementRequest {
+    pub user_id: String,
+    pub sender: String,
     pub reference: String,
+    pub transaction_hash: String,
+    pub amount: String,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

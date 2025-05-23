@@ -30,6 +30,7 @@ install:
 	cargo add hmac
 	cargo add sha2
 	cargo add hex
+	cargo add anyhow
 	cargo install cargo-watch
 
 

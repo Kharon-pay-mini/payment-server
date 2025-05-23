@@ -134,7 +134,7 @@ pub async fn get_monnify_auth_token(app_state: &web::Data<AppState>) -> Result<S
 pub async fn disburse_payment(
     app_state: &web::Data<AppState>,
     reference: &str,
-    amount: f64,
+    amount: i64,
     narration: Option<&str>,
     bank_code: &str,
     account_number: &str,
@@ -382,14 +382,13 @@ pub async fn handle_successful_disbursement(
                     SET payment_status = $1,
                         updated_at = $2,
                         transaction_reference = $3,
-                    WHERE user_id = $4 AND tx_hash = $5
+                    WHERE user_id = $4
                     "#,
                 )
                 .bind("COMPLETED")
                 .bind(Utc::now())
                 .bind(&event_data.transaction_reference)
                 .bind(&user_id)
-                .bind(&disbursement.crypto_tx_hash)
                 .execute(&app_state.db)
                 .await
                 .map_err(|e| format!("Failed to update transaction: {}", e))?;
@@ -400,20 +399,18 @@ pub async fn handle_successful_disbursement(
                         INSERT INTO transactions (
                             user_id, order_type, crypto_amount, crypto_type,
                             fiat_amount, fiat_currency, payment_method, payment_status,
-                            tx_hash, reference, transaction_reference
+                            reference, transaction_reference
                     )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                         "#,
                     )
                     .bind(&user_id)
                     .bind(&disbursement.order_type)
                     .bind(&disbursement.crypto_amount)
                     .bind(&disbursement.crypto_symbol)
-                    .bind(&disbursement.amount)
                     .bind(&disbursement.currency)
                     .bind(&disbursement.payment_method)
                     .bind("COMPLETED")
-                    .bind(&disbursement.crypto_tx_hash)
                     .bind(&event_data.reference)
                     .bind(&event_data.transaction_reference)
                     .execute(&app_state.db)
@@ -520,14 +517,13 @@ pub async fn handle_failed_disbursement(
                     SET payment_status = $1,
                         updated_at = $2,
                         transaction_reference = $3
-                    WHERE user_id = $4 AND tx_hash = $5
+                    WHERE user_id = $4
                     "#,
                 )
                 .bind("FAILED")
                 .bind(Utc::now())
                 .bind(&event_data.transaction_reference)
                 .bind(&user_id)
-                .bind(&disbursement.crypto_tx_hash)
                 .execute(&app_state.db)
                 .await
                 .map_err(|e| format!("Failed to update transaction: {}", e))?;
@@ -628,14 +624,13 @@ pub async fn handle_pending_disbursement(
                     SET payment_status = $1,
                         updated_at = $2,
                         transaction_reference = $3
-                    WHERE user_id = $4 AND tx_hash = $5
+                    WHERE user_id = $4
                     "#,
                 )
                 .bind("PENDING")
                 .bind(Utc::now())
                 .bind(&event_data.transaction_reference)
                 .bind(&user_id)
-                .bind(&disbursement.crypto_tx_hash)
                 .execute(&app_state.db)
                 .await
                 .map_err(|e| format!("Failed to update transaction: {}", e))?;
@@ -653,7 +648,7 @@ pub async fn handle_pending_disbursement(
             UPDATE transactions
             SET payment_status = $1,
                 updated_at = $2
-            WHERE transaction_reference = $3 OR tx_hash = $4
+            WHERE transaction_reference = $3
             "#,
         )
         .bind("PENDING")
@@ -728,14 +723,13 @@ pub async fn handle_processing_disbursement(
                     SET payment_status = $1,
                         updated_at = $2,
                         transaction_reference = $3
-                    WHERE user_id = $4 AND tx_hash = $5
+                    WHERE user_id = $4
                     "#,
                 )
                 .bind("PROCESSING")
                 .bind(Utc::now())
                 .bind(&event_data.transaction_reference)
                 .bind(&user_id)
-                .bind(&disbursement.crypto_tx_hash)
                 .execute(&app_state.db)
                 .await
                 .map_err(|e| format!("Failed to update transaction: {}", e))?;
