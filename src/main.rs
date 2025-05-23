@@ -3,10 +3,11 @@ mod config;
 mod integrations;
 mod middleware;
 mod models;
+mod pricefeed;
 mod routes;
 mod service;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use actix_cors::Cors;
 use actix_web::{
@@ -21,6 +22,7 @@ use config::{
 };
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
+use pricefeed::pricefeed::PriceData;
 use service::geolocation::geolocator::GeoLocator;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
@@ -29,6 +31,7 @@ pub struct AppState {
     env: Config,
     pub redis_pool: RedisPool,
     pub geo_locator: GeoLocator,
+    pub price_feed: Arc<Mutex<PriceData>>,
 }
 
 #[actix_web::main]
@@ -60,6 +63,8 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to create Redis pool");
 
+    let price_data = pricefeed::pricefeed::init_price_feed().await;
+
     println!("Server started successfully...");
 
     let geo_locator = GeoLocator::new(config.ip_info_token.clone());
@@ -82,6 +87,7 @@ async fn main() -> std::io::Result<()> {
                 env: config.clone(),
                 redis_pool: redis_pool.clone(),
                 geo_locator: geo_locator.clone(),
+                price_feed: price_data.clone(),
             })))
             .configure(config_scope::config)
             .wrap(cors)

@@ -12,7 +12,9 @@ pub struct Config {
     pub monnify_wallet_account_number: String,
     pub monnify_contract_code: String,
     pub redis_url: String,
-    pub port: String
+    pub port: String,
+    pub hmac_secret: String,
+    pub hmac_key: String,
 }
 
 impl Config {
@@ -36,6 +38,8 @@ impl Config {
             std::env::var("MONNIFY_CONTRACT_CODE").expect("MONNIFY_CONTRACT_CODE must be set");
         let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
         let port = std::env::var("PORT").expect("PORT must be set");
+        let hmac_secret = std::env::var("HMAC_SECRET").expect("HMAC_SECRET must be set");
+        let hmac_key = std::env::var("HMAC_KEY").expect("HMAC_KEY must be set");
 
         Config {
             database_url,
@@ -50,7 +54,9 @@ impl Config {
             monnify_wallet_account_number,
             monnify_contract_code,
             redis_url,
-            port
+            port,
+            hmac_secret,
+            hmac_key,
         }
     }
 }

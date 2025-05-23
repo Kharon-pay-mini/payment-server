@@ -134,7 +134,7 @@ pub async fn get_monnify_auth_token(app_state: &web::Data<AppState>) -> Result<S
 pub async fn disburse_payment(
     app_state: &web::Data<AppState>,
     reference: &str,
-    amount: f64,
+    amount: i64,
     narration: Option<&str>,
     bank_code: &str,
     account_number: &str,
@@ -408,7 +408,6 @@ pub async fn handle_successful_disbursement(
                     .bind(&disbursement.order_type)
                     .bind(&disbursement.crypto_amount)
                     .bind(&disbursement.crypto_symbol)
-                    .bind(&disbursement.amount)
                     .bind(&disbursement.currency)
                     .bind(&disbursement.payment_method)
                     .bind("COMPLETED")
