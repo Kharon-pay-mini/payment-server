@@ -1,0 +1,12 @@
+-- Your SQL goes here
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) NOT NULL UNIQUE,
+    phone VARCHAR(20) UNIQUE,
+    last_logged_in TIMESTAMPTZ DEFAULT NOW(),
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    role VARCHAR(10) NOT NULL DEFAULT 'user',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
