@@ -77,7 +77,7 @@ pub struct FilteredUserSecurityLogs {
     pub ip_address: String,
     pub city: String,
     pub country: String,
-    pub failed_login_attempts: i64,
+    pub failed_login_attempts: i32,
     pub flagged_for_review: bool,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,

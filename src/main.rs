@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod database;
 mod integrations;
 mod middleware;
 mod models;
@@ -20,14 +21,16 @@ use config::{
     config_scope,
     redis_config::{init_redis_pool, RedisPool},
 };
+use database::db::Database;
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use pricefeed::pricefeed::PriceData;
+use serde::Serialize;
 use service::geolocation::geolocator::GeoLocator;
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
 pub struct AppState {
-    db: Pool<Postgres>,
+    db: Database,
     env: Config,
     pub redis_pool: RedisPool,
     pub geo_locator: GeoLocator,
@@ -44,20 +47,7 @@ async fn main() -> std::io::Result<()> {
 
     let config = Config::init();
 
-    let pool = match PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&config.database_url)
-        .await
-    {
-        Ok(pool) => {
-            println!("Connection to database successful.");
-            pool
-        }
-        Err(e) => {
-            println!("Connection to database failed!: {:?}", e);
-            std::process::exit(1);
-        }
-    };
+    let db = database::db::Database::new();
 
     let redis_pool = init_redis_pool(&config.redis_url)
         .await
@@ -83,7 +73,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .app_data(web::Data::from(Arc::new(AppState {
-                db: pool.clone(),
+                db: db.clone(),
                 env: config.clone(),
                 redis_pool: redis_pool.clone(),
                 geo_locator: geo_locator.clone(),
