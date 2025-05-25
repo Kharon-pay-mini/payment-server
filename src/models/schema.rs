@@ -3,7 +3,7 @@
 diesel::table! {
     otp (otp_id) {
         otp_id -> Uuid,
-        otp -> Int4,
+        otp_code -> Int4,
         user_id -> Uuid,
         created_at -> Timestamptz,
         expires_at -> Timestamptz,
