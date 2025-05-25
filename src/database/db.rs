@@ -3,7 +3,7 @@ use crate::database::{
     user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
 };
 use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager, PooledConnection};
+use diesel::r2d2::{self, ConnectionManager, PoolError, PooledConnection};
 use dotenv::dotenv;
 
 pub type DBPool = r2d2::Pool<ConnectionManager<PgConnection>>;
@@ -29,12 +29,12 @@ impl Database {
 }
 
 pub trait DbAccess {
-    fn conn(&self) -> PooledConnection<ConnectionManager<PgConnection>>;
+    fn conn(&self) -> Result<PooledConnection<ConnectionManager<PgConnection>>, PoolError>;
 }
 
 impl DbAccess for Database {
-    fn conn(&self) -> PooledConnection<ConnectionManager<PgConnection>> {
-        self.pool.get().expect("Failed to get DB connection")
+    fn conn(&self) -> Result<PooledConnection<ConnectionManager<PgConnection>>, PoolError> {
+        self.pool.get()
     }
 }
 

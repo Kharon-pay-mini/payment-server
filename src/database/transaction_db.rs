@@ -13,8 +13,10 @@ pub trait TransactionImpl: DbAccess {
         &self,
         transaction: NewTransaction,
     ) -> Result<Transaction, diesel::result::Error> {
+        let mut conn = self.conn().map_err(|_| diesel::result::Error::NotFound)?;
+
         diesel::insert_into(transactions)
             .values(&transaction)
-            .get_result(&mut self.conn())
+            .get_result(&mut conn)
     }
 }

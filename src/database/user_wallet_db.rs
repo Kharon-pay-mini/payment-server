@@ -13,8 +13,10 @@ pub trait UserWalletImpl: DbAccess {
         &self,
         wallet: NewUserWallet,
     ) -> Result<UserWallet, diesel::result::Error> {
+        let mut conn = self.conn().map_err(|_| diesel::result::Error::NotFound)?;
+
         diesel::insert_into(user_wallet)
             .values(&wallet)
-            .get_result(&mut self.conn())
+            .get_result(&mut conn)
     }
 }
