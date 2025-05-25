@@ -122,9 +122,9 @@ pub struct Otp {
     pub otp_code: i32,
     pub user_id: uuid::Uuid,
     #[serde(rename = "createdAt")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
     #[serde(rename = "expiresAt")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, AsChangeset, Insertable)]

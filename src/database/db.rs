@@ -1,13 +1,10 @@
-use actix_web::{web, HttpResponse};
-use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager};
-use dotenv::dotenv;
-
-use crate::models::models::{self, NewUser, Otp, Transaction, User, UserSecurityLog, UserWallet};
-use crate::models::schema::{
-    otp::dsl::*, transactions::dsl::*, user_security_logs::dsl::*, user_wallet::dsl::*,
-    users::dsl::*,
+use crate::database::{
+    otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
+    user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
 };
+use diesel::prelude::*;
+use diesel::r2d2::{self, ConnectionManager, PooledConnection};
+use dotenv::dotenv;
 
 pub type DBPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
@@ -29,16 +26,20 @@ impl Database {
 
         Database { pool: result }
     }
+}
 
-    pub fn get_users(&self) -> Vec<User> {
-        users
-            .load::<User>(&mut self.pool.get().unwrap())
-            .expect("Failed to get users.")
-    }
+pub trait DbAccess {
+    fn conn(&self) -> PooledConnection<ConnectionManager<PgConnection>>;
+}
 
-    pub fn create_user(&self, user: NewUser) -> Result<User, diesel::result::Error> {
-        diesel::insert_into(users)
-            .values(&user)
-            .get_result(&mut self.pool.get().unwrap())
+impl DbAccess for Database {
+    fn conn(&self) -> PooledConnection<ConnectionManager<PgConnection>> {
+        self.pool.get().expect("Failed to get DB connection")
     }
 }
+
+impl UserWalletImpl for Database {}
+impl UserImpl for Database {}
+impl OtpImpl for Database {}
+impl TransactionImpl for Database {}
+impl UserSecurityLogsImpl for Database {}
