@@ -3,10 +3,17 @@ use crate::database::{
     user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
 };
 use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager, PoolError, PooledConnection};
+use diesel::r2d2::ConnectionManager;
 use dotenv::dotenv;
+use r2d2::{Error as PoolError, Pool, PooledConnection};
 
 pub type DBPool = r2d2::Pool<ConnectionManager<PgConnection>>;
+
+#[derive(Debug)]
+pub enum AppError {
+    DbConnectionError(PoolError),
+    DieselError(diesel::result::Error),
+}
 
 #[derive(Clone)]
 pub struct Database {
