@@ -1,43 +1,54 @@
+use crate::{
+    database::{
+        db::AppError, otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
+        user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
+    },
+    models::models::{
+        CreateUserSchema, NewOtp, NewTransaction, NewUser, NewUserSecurityLog, NewUserWallet, Otp,
+        OtpSchema, TokenClaims, Transaction, TransactionSchema, User, UserSecurityLog,
+        UserSecurityLogsSchema, UserWallet, UserWalletSchema, ValidateOtpSchema,
+    },
+};
 use actix_web::{
     cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use awc::body;
 use chrono::Utc;
+use diesel::expression::is_aggregate::No;
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{encode, EncodingKey, Header};
+use num_traits::FromPrimitive;
 use rand::{rng, Rng};
 use redis::AsyncCommands;
+use rust_decimal::Decimal;
 use serde_json::json;
-use sqlx::Row;
+use sha2::Sha256;
 use std::{time::Duration, usize};
 use uuid::Uuid;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 
-type HmacSha256 = Hmac<Sha256>; 
+type HmacSha256 = Hmac<Sha256>;
 
 use crate::{
-    auth::jwt_auth, integrations::{
+    auth::jwt_auth,
+    integrations::{
         bank::{
-            disburse_payment, fetch_banks_via_paystack,
-            process_monnify_webhook, retrieve_pending_disbursement, store_pending_disbursement,
-            verify_account_via_paystack, verify_monnify_webhook_signature,
+            disburse_payment, fetch_banks_via_paystack, process_monnify_webhook,
+            retrieve_pending_disbursement, store_pending_disbursement, verify_account_via_paystack,
+            verify_monnify_webhook_signature,
         },
         model::{
             BankVerificationSchema, ConfirmDisbursementRequest, DisbursementDetails,
             InitDisbursementRequest, InitDisbursementResponse, MonnifyWebhookPayload,
             PaymentResult, PendingDisbursement,
         },
-    }, models::{
-        models::{
-            CreateUserSchema, Otp, OtpSchema, TokenClaims, TransactionSchema, Transactions, User,
-            UserSecurityLogs, UserWallet, UserWalletSchema, ValidateOtpSchema,
-        },
-        response::{
-            FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs,
-            FilteredWallet,
-        },
-    }, pricefeed, service::email_service::send_verification_email, AppState
+    },
+    models::response::{
+        FilteredOtp, FilteredTransaction, FilteredUser, FilteredUserSecurityLogs, FilteredWallet,
+    },
+    pricefeed,
+    service::email_service::send_verification_email,
+    AppState,
 };
 
 fn filtered_user_record(user: &User) -> FilteredUser {
@@ -68,7 +79,7 @@ fn filtered_wallet_record(wallet: &UserWallet) -> FilteredWallet {
     }
 }
 
-fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransaction {
+fn filtered_transaction_record(transaction: &Transaction) -> FilteredTransaction {
     FilteredTransaction {
         tx_id: transaction.tx_id.to_string(),
         user_id: transaction.user_id.to_string(),
@@ -89,7 +100,7 @@ fn filtered_transaction_record(transaction: &Transactions) -> FilteredTransactio
     }
 }
 
-fn filtered_security_logs(security_log: &UserSecurityLogs) -> FilteredUserSecurityLogs {
+fn filtered_security_logs(security_log: &UserSecurityLog) -> FilteredUserSecurityLogs {
     FilteredUserSecurityLogs {
         log_id: security_log.log_id.to_string(),
         user_id: security_log.user_id.to_string(),
@@ -106,9 +117,9 @@ fn filtered_otp(otp: &Otp) -> FilteredOtp {
     FilteredOtp {
         otp_id: otp.otp_id.to_string(),
         user_id: otp.user_id.to_string(),
-        otp: otp.otp,
-        created_at: otp.created_at.unwrap_or_else(|| Utc::now()),
-        expires_at: otp.expires_at.unwrap(),
+        otp: otp.otp_code,
+        created_at: otp.created_at,
+        expires_at: otp.expires_at,
     }
 }
 
@@ -118,81 +129,98 @@ async fn create_user_handler(
     data: web::Data<AppState>,
 ) -> impl Responder {
     let email = body.email.to_string().to_lowercase();
-    let phone = body.phone.as_ref().map(|s| s.to_string());
-    let role = body.role.to_string();
+    let phone: Option<String> = body.phone.as_ref().map(|s| s.to_string());
 
-    let exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-        .bind(&email)
-        .fetch_one(&data.db)
-        .await
-        .unwrap()
-        .get(0);
+    let new_user = NewUser {
+        email: email.clone(),
+        phone: phone.clone(),
+        verified: false,
+        role: String::from("user"),
+    };
 
-    if exists {
-        let query_result = match &phone {
-            Some(phone_value) => sqlx::query_as::<_, User>(
-                "UPDATE users SET last_logged_in = NOW(), phone = $2 WHERE email = $1 RETURNING *",
-            )
-            .bind(&email)
-            .bind(phone_value)
-            .fetch_one(&data.db)
-            .await,
-            None => {
-                sqlx::query_as::<_, User>(
-                    "UPDATE users SET last_logged_in = NOW() WHERE email = $1 RETURNING *",
-                )
-                .bind(&email)
-                .fetch_one(&data.db)
-                .await
-            }
-        };
-
-        match query_result {
-            Ok(user) => {
-                let user_response = serde_json::json!({"status": "success", "data": serde_json::json!({
-                    "user": filtered_user_record(&user)
-                })});
-
-                return HttpResponse::Ok().json(user_response);
-            }
-            Err(e) => {
-                eprintln!("Database error on update: {:?}", e);
-                return HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+    // 1. Check if email already exists
+    match data.db.get_user_by_email(email.clone()) {
+        Ok(_) => {
+            return HttpResponse::BadRequest().json(json!({
+                "status": "error",
+                "data": "Email Already Exists"
+            }));
+        }
+        Err(AppError::DbConnectionError(e)) => {
+            eprintln!("DB connection error: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("{:?}", e)
+            }));
+        }
+        Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+            // Email not found — proceed to check phone (if provided)
+            if let Some(phone_number) = phone {
+                match data.db.get_user_by_phone(phone_number.clone()) {
+                    Ok(_) => {
+                        return HttpResponse::BadRequest().json(json!({
+                            "status": "error",
+                            "data": "Phone Already Exists"
+                        }));
+                    }
+                    Err(AppError::DbConnectionError(e)) => {
+                        eprintln!("DB connection error: {:?}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": format!("{:?}", e)
+                        }));
+                    }
+                    Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+                        // Both email and phone are unique, safe to create
+                        match data.db.create_user(new_user.clone()) {
+                            Ok(user) => {
+                                return HttpResponse::Ok().json(json!({
+                                    "status": "success",
+                                    "data": filtered_user_record(&user)
+                                }));
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to create user: {:?}", e);
+                                return HttpResponse::InternalServerError().json(json!({
+                                    "status": "error",
+                                    "message": format!("Failed to create user: {:?}", e)
+                                }));
+                            }
+                        }
+                    }
+                    Err(AppError::DieselError(e)) => {
+                        eprintln!("Query error: {:?}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": format!("{:?}", e)
+                        }));
+                    }
+                }
+            } else {
+                // No phone provided, just create user
+                match data.db.create_user(new_user.clone()) {
+                    Ok(user) => {
+                        return HttpResponse::Ok().json(json!({
+                            "status": "success",
+                            "data": user
+                        }));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to create user: {:?}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": format!("Failed to create user: {:?}", e)
+                        }));
+                    }
+                }
             }
         }
-    } else {
-        let query_result = match &phone {
-            Some(phone_value) => {
-                sqlx::query_as::<_, User>("INSERT INTO users (email, role, phone, last_logged_in) VALUES ($1, $2, $3, now()) RETURNING *")
-                    .bind(&email)
-                    .bind(&role)
-                    .bind(phone_value)
-                    .fetch_one(&data.db)
-                    .await
-            },
-            None => {
-                sqlx::query_as::<_, User>("INSERT INTO users (email, role, last_logged_in) VALUES ($1, $2, now()) RETURNING *")
-                    .bind(&email)
-                    .bind(&role)
-                    .fetch_one(&data.db)
-                    .await
-            }
-        };
-
-        match query_result {
-            Ok(user) => {
-                let user_response = serde_json::json!({"status": "success", "data": serde_json::json!({
-                    "user": filtered_user_record(&user)
-                })});
-
-                return HttpResponse::Ok().json(user_response);
-            }
-            Err(e) => {
-                eprintln!("Database error on insert: {:?}", e);
-                return HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
-            }
+        Err(AppError::DieselError(e)) => {
+            eprintln!("Query error: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("{:?}", e)
+            }));
         }
     }
 }
@@ -208,74 +236,46 @@ async fn update_user_wallet_handler(
     let wallet_address = body.wallet_address.to_string();
     let network = body.network.to_string();
 
-    let user_exists: bool =
-        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-            .bind(user_id)
-            .fetch_one(&data.db)
-            .await
-        {
-            Ok(exists) => exists,
-            Err(e) => {
-                eprintln!("User verification error: {}", e);
-                return HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "User verification failed"
-                }));
+    match data.db.get_user_by_id(user_id) {
+        Ok(_) => {
+            let wallet = NewUserWallet {
+                user_id: user_id.clone(),
+                wallet_address: Some(wallet_address.clone()),
+                network_used_last: Some(network.clone()),
+            };
+
+            match data.db.create_user_wallet(wallet) {
+                Ok(wallet) => {
+                    let filtered_wallet = filtered_wallet_record(&wallet);
+                    return HttpResponse::Created().json(filtered_wallet);
+                }
+                Err(e) => {
+                    eprintln!("Failed to create wallet: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create user: {:?}", e)
+                    }));
+                }
             }
-        };
-
-    if !user_exists {
-        return HttpResponse::NotFound().json(json!({
-            "status": "error",
-            "message": "User not found"
-        }));
-    }
-
-    // 2. Insert or update wallet with ownership check
-    let wallet = match sqlx::query_as::<_, UserWallet>(
-        r#"
-        WITH new_wallet AS (
-            INSERT INTO user_wallet (user_id, wallet_address, network_used_last)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (wallet_address) 
-            DO UPDATE SET 
-                network_used_last = EXCLUDED.network_used_last,
-                updated_at = NOW()
-            WHERE user_wallet.user_id = $1
-            RETURNING *
-        )
-        SELECT * FROM new_wallet
-        UNION ALL
-        SELECT * FROM user_wallet 
-        WHERE wallet_address = $2 AND user_id = $1 AND NOT EXISTS (
-            SELECT 1 FROM new_wallet
-        )
-        "#,
-    )
-    .bind(user_id)
-    .bind(&wallet_address)
-    .bind(&network)
-    .fetch_one(&data.db)
-    .await
-    {
-        Ok(wallet) => wallet,
-        Err(sqlx::Error::RowNotFound) => {
-            return HttpResponse::Conflict().json(json!({
-                "status": "error",
-                "message": "Wallet address already belongs to another user"
-            }));
         }
         Err(e) => {
-            eprintln!("Database error: {}", e);
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to update wallet"
-            }));
+            match e {
+                AppError::DieselError(diesel::result::Error::NotFound) => {
+                    return HttpResponse::NotFound().json(json!({
+                        "status": "error",
+                        "message": "User not found"
+                    }));
+                }
+                _ => {
+                    eprintln!("Failed to create wallet: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create wallet: {:?}", e)
+                    }));
+                }
+            };
         }
-    };
-
-    let filtered_wallet = filtered_wallet_record(&wallet);
-    HttpResponse::Created().json(filtered_wallet)
+    }
 }
 
 #[post("/users/me/transactions")]
@@ -293,116 +293,59 @@ async fn update_transaction_handler(
     let payment_method = body.payment_method.to_string();
     let payment_status = body.payment_status.to_string();
     let tx_hash = body.tx_hash.to_string();
+    let reference = body.reference.to_string();
 
-    let transaction = sqlx::query_as::<_, Transactions>(
-        r#"
-        INSERT INTO transactions (
-            user_id, order_type, crypto_amount, crypto_type,
-            fiat_amount, fiat_currency, payment_method, payment_status,
-            tx_hash
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT ON CONSTRAINT unique_transaction_hash
-        DO UPDATE
-        SET
-            user_id = EXCLUDED.user_id,
-            order_type = EXCLUDED.order_type,
-            crypto_amount = EXCLUDED.crypto_amount,
-            crypto_type = EXCLUDED.crypto_type,
-            fiat_amount = EXCLUDED.fiat_amount,
-            fiat_currency = EXCLUDED.fiat_currency,
-            payment_method = EXCLUDED.payment_method,
-            payment_status = EXCLUDED.payment_status,
-            updated_at = NOW()
-        RETURNING *
-    "#,
-    )
-    .bind(user_id)
-    .bind(order_type)
-    .bind(crypto_amount)
-    .bind(crypto_type)
-    .bind(fiat_amount)
-    .bind(fiat_currency)
-    .bind(payment_method)
-    .bind(payment_status)
-    .bind(tx_hash)
-    .fetch_optional(&data.db)
-    .await;
+    match data.db.get_user_by_id(user_id) {
+        Ok(_) => {
+            let new_tx = NewTransaction {
+                user_id: user_id.clone(),
+                order_type: order_type.clone(),
+                crypto_amount: crypto_amount.clone(),
+                crypto_type: crypto_type.clone(),
+                fiat_amount: fiat_amount.clone(),
+                fiat_currency: fiat_currency.clone(),
+                payment_method: payment_method.clone(),
+                payment_status: payment_status.clone(),
+                reference: reference.clone(),
+                tx_hash: tx_hash.clone(),
+                settlement_status: None,
+                transaction_reference: None,
+                settlement_date: None,
+            };
 
-    match transaction {
-        Ok(Some(transaction)) => {
-            let filtered_transaction = filtered_transaction_record(&transaction);
-            HttpResponse::Ok().json(filtered_transaction)
+            match data.db.create_transaction(new_tx) {
+                Ok(transaction) => {
+                    let filtered_transaction = filtered_transaction_record(&transaction);
+                    return HttpResponse::Created().json(filtered_transaction);
+                }
+                Err(e) => {
+                    eprintln!("Failed to create transaction: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create transaction: {:?}", e)
+                    }));
+                }
+            }
         }
-        Ok(None) => HttpResponse::Conflict().json("Transaction already exists"),
         Err(e) => {
-            eprint!("Database error: {}", e);
-            HttpResponse::InternalServerError().json("Database error")
+            match e {
+                AppError::DieselError(diesel::result::Error::NotFound) => {
+                    return HttpResponse::NotFound().json(json!({
+                        "status": "error",
+                        "message": "User not found"
+                    }));
+                }
+                _ => {
+                    eprintln!("Failed to create transaction: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create transaction: {:?}", e)
+                    }));
+                }
+            };
         }
     }
 }
-
-/*
-DEPRECATED, LOGGING NOW DONE AUTOMATICALLY
-#[post("/users/me/logs")]
-async fn update_user_logs_handler(
-    body: web::Json<UserSecurityLogsSchema>,
-    data: web::Data<AppState>,
-    _: jwt_auth::JwtMiddleware,
-) -> impl Responder {
-    let user_id = body.user_id;
-    let ip_address = body.ip_address.to_string();
-    let city = body.city.to_string();
-    let country = body.country.to_string();
-    let failed_login_attempts = body.failed_login_attempts;
-    let flagged_for_review = body.flagged_for_review;
-    let security_log = sqlx::query_as::<_, UserSecurityLogs>(
-        r#"
-        INSERT INTO user_security_logs (
-            user_id, ip_address, city, country,
-            failed_login_attempts, flagged_for_review
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-        "#,
-    )
-    .bind(user_id)
-    .bind(ip_address)
-    .bind(city)
-    .bind(country)
-    .bind(failed_login_attempts)
-    .bind(flagged_for_review)
-    .fetch_optional(&data.db)
-    .await;
-    match security_log {
-        Ok(Some(security_log)) => {
-            /*
-            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-                .bind(security_log.user_id)
-                .fetch_one(&data.db)
-                .await;
-            match user {
-                Ok(user) => {
-                    let filtered_security_logs = filtered_security_logs(&security_log);
-                    HttpResponse::Ok().json(filtered_security_logs)
-                }
-                Err(e) => {
-                    eprint!("Error fetching user: {}", e);
-                    HttpResponse::InternalServerError().json("User data retrieval failed!")
-                }
-            } */
-            let filtered_security_logs = filtered_security_logs(&security_log);
-            HttpResponse::Ok().json(filtered_security_logs)
-        }
-        Ok(None) => {
-            HttpResponse::Conflict().json("Security log already exists or no changes detected")
-        }
-        Err(e) => {
-            eprint!("Database error: {}", e);
-            return HttpResponse::InternalServerError().json("Database error");
-        }
-    }
-}       */
 
 #[post("/users/request-otp")]
 async fn request_otp_handler(
@@ -414,54 +357,51 @@ async fn request_otp_handler(
 
     let otp_code = rng().random_range(100_000..=999_999);
 
-    let expiry = Utc::now() + Duration::from_secs(15 * 60);
+    // let expiry = Utc::now() + Duration::from_secs(15 * 60);
 
-    let otp = sqlx::query_as::<_, Otp>(
-        r#"
-        INSERT INTO otp (user_id, otp, expires_at)
-        VALUES ($1, $2, $3)
-        ON CONFLICT ON CONSTRAINT unique_user_id DO UPDATE 
-        SET otp = $2,
-            created_at = NOW(),
-            expires_at = $3
-        RETURNING otp_id, user_id, otp, created_at, expires_at
-        "#,
-    )
-    .bind(user_id)
-    .bind(otp_code)
-    .bind(expiry)
-    .fetch_one(&data.db)
-    .await;
+    match data.db.get_user_by_id(user_id) {
+        Ok(_) => {
+            let new_otp = NewOtp {
+                otp_code: otp_code.clone(),
+                user_id: user_id.clone(),
+            };
 
-    match otp {
-        Ok(otp) => {
-            let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-                .bind(otp.user_id)
-                .fetch_one(&data.db)
-                .await;
-
-            match user {
-                Ok(user) => {
+            match data.db.create_otp(new_otp) {
+                Ok(_) => {
                     if let Err(e) = send_verification_email(&email, otp_code).await {
                         eprint!("Failed to send email: {}", e);
                         return HttpResponse::InternalServerError()
                             .json("Failed to send verification email");
+                    } else {
+                        return HttpResponse::Ok()
+                            .json(json!({"message": format!("OTP sent to user: {:?}", email)}));
                     }
-                    let filtered_otp = filtered_otp(&otp);
-                    HttpResponse::Ok().json(json!({
-                        "otp": filtered_otp,
-                        "user": filtered_user_record(&user),
-                    }))
                 }
                 Err(e) => {
-                    eprint!("Error fetching user: {}", e);
-                    HttpResponse::InternalServerError().json("User data retrieval failed!")
+                    eprintln!("Failed to create otp: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create otp: {:?}", e)
+                    }));
                 }
             }
         }
         Err(e) => {
-            eprint!("Database error: {}", e);
-            return HttpResponse::InternalServerError().json("Database error");
+            match e {
+                AppError::DieselError(diesel::result::Error::NotFound) => {
+                    return HttpResponse::NotFound().json(json!({
+                        "status": "error",
+                        "message": "User not found"
+                    }));
+                }
+                _ => {
+                    eprintln!("Failed to create OTP: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": format!("Failed to create OTP: {:?}", e)
+                    }));
+                }
+            };
         }
     }
 }
@@ -474,37 +414,23 @@ async fn validate_otp_handler(
     let user_id = body.user_id;
     let otp = body.otp;
 
-    let stored_otp = sqlx::query_as::<_, Otp>("SELECT * FROM otp WHERE user_id = $1")
-        .bind(user_id)
-        .fetch_optional(&data.db)
-        .await;
+    let stored_otp = data.db.get_otp_by_user_id(user_id);
 
     match stored_otp {
-        Ok(Some(otp_record)) => {
-            if let Some(expiry) = otp_record.expires_at {
-                if expiry < Utc::now() {
-                    if let Err(e) = sqlx::query("DELETE FROM otp WHERE expires_at < NOW()")
-                        .execute(&data.db)
-                        .await
-                    {
-                        eprint!("Failed to clean expired OTPs: {}", e);
-                    }
-
-                    return HttpResponse::Unauthorized().json("OTP has expired.");
+        Ok(otp_record) => {
+            if otp_record.expires_at < Utc::now() {
+                if let Err(e) = data.db.delete_expired_otps() {
+                    eprint!("Failed to clean expired OTPs: {:?}", e);
                 }
-            } else {
-                HttpResponse::Unauthorized().json("OTP expiry time is missing.");
+                return HttpResponse::Unauthorized().json("OTP has expired.");
             }
-            if otp_record.otp != otp {
+
+            if otp_record.otp_code != otp {
                 return HttpResponse::Unauthorized().json("Invalid otp");
             }
 
-            if let Err(e) = sqlx::query("DELETE FROM otp WHERE user_id = $1")
-                .bind(user_id)
-                .execute(&data.db)
-                .await
-            {
-                eprint!("Failed to delete used OTP: {}", e);
+            if let Err(e) = data.db.delete_otp_by_id(otp_record.otp_id) {
+                eprint!("Failed to delete used OTP: {:?}", e);
                 return HttpResponse::InternalServerError().json("Failed to clean up OTP");
             }
 
@@ -534,10 +460,16 @@ async fn validate_otp_handler(
                 .cookie(cookie)
                 .json(json!({"status": "success", "token": token}))
         }
-        Ok(None) => HttpResponse::Unauthorized().json("No OTP found"),
         Err(e) => {
-            eprint!("Database error: {}", e);
-            HttpResponse::InternalServerError().json("Database error.")
+            match e {
+                AppError::DieselError(diesel::result::Error::NotFound) => {
+                    return HttpResponse::Unauthorized().json("No OTP found");
+                }
+                _ => {
+                    eprint!("Database error: {:?}", e);
+                    return HttpResponse::InternalServerError().json("Database error.");
+                }
+            };
         }
     }
 }
@@ -550,17 +482,16 @@ async fn get_user_handler(
 ) -> impl Responder {
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
-    let user = match sqlx::query_as!(User, "SELECT id, email, phone, last_logged_in, verified,role, created_at FROM users WHERE id = $1", user_id)
-        .fetch_optional(&data.db)
-        .await
-        {
-            Ok(Some(user)) => user,
-            Ok(None) => return HttpResponse::NotFound().json("User not found"),
-            Err(e) => {
-                eprint!("Error fetching user: {}", e);
-                return HttpResponse::InternalServerError().json("Error fetching user");
-            }
-        };
+    let user = match data.db.get_user_by_id(*user_id) {
+        Ok(user) => user,
+        Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+            return HttpResponse::NotFound().json("User not found")
+        }
+        Err(e) => {
+            eprint!("Error fetching user: {:?}", e);
+            return HttpResponse::InternalServerError().json("Error fetching user");
+        }
+    };
 
     let json_response = serde_json::json!({
         "status": "success",
@@ -581,22 +512,13 @@ async fn get_transaction_handler(
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
 
-    let transactions = match sqlx::query_as!(
-        Transactions,
-        "SELECT 
-            tx_id, user_id, order_type, crypto_amount, crypto_type, 
-            fiat_amount, fiat_currency, payment_method, payment_status, tx_hash, 
-            reference, settlement_status, transaction_reference, 
-            settlement_date, created_at, updated_at 
-            FROM transactions WHERE user_id = $1",
-        user_id
-    )
-    .fetch_all(&data.db)
-    .await
-    {
+    let transactions = match data.db.get_transaction_by_user_id(*user_id) {
         Ok(tx) => tx,
+        Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+            return HttpResponse::NotFound().json("User not found")
+        }
         Err(e) => {
-            eprint!("Error fetching transactions: {}", e);
+            eprint!("Error fetching transactions: {:?}", e);
             {
                 return HttpResponse::InternalServerError().json("Error fetching transactions");
             }
@@ -627,20 +549,10 @@ async fn get_user_logs_handler(
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
 
-    let logs = match sqlx::query_as!(
-        UserSecurityLogs,
-        "SELECT log_id, user_id, ip_address,city,
-            country, failed_login_attempts, flagged_for_review,
-            created_at
-            FROM user_security_logs WHERE user_id = $1",
-        user_id
-    )
-    .fetch_all(&data.db)
-    .await
-    {
+    let logs = match data.db.get_security_logs_by_user_id(*user_id) {
         Ok(log) => log,
         Err(e) => {
-            eprint!("Error fetching user logs: {}", e);
+            eprint!("Error fetching user logs: {:?}", e);
             return HttpResponse::InternalServerError().json("Error fetching user logs");
         }
     };
@@ -669,19 +581,18 @@ async fn get_wallet_handler(
     let ext = req.extensions();
     let user_id = ext.get::<uuid::Uuid>().unwrap();
 
-    let wallet = match sqlx::query_as!(
-        UserWallet,
-        "SELECT id, user_id, wallet_address, network_used_last, created_at, updated_at FROM user_wallet WHERE user_id = $1",
-        user_id
-    )
-    .fetch_optional(&data.db)
-    .await 
-    {
-        Ok(Some(wallet)) => wallet,
-        Ok(None) => return HttpResponse::NotFound().json("Wallet not found"),
+    let wallet = match data.db.get_wallet_by_user_id(*user_id) {
+        Ok(wallet) => wallet,
         Err(e) => {
-            eprint!("Error fetching user wallet: {}", e);
-            return HttpResponse::InternalServerError().json("Error fetching user wallet");
+            match e {
+                AppError::DieselError(diesel::result::Error::NotFound) => {
+                    return HttpResponse::NotFound().json("Wallet not found");
+                }
+                _ => {
+                    eprint!("Database error: {:?}", e);
+                    return HttpResponse::InternalServerError().json("Error fetching user wallet");
+                }
+            };
         }
     };
     let json_response = serde_json::json!({
@@ -775,10 +686,10 @@ pub async fn init_disburse_payment_handler(
     let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
 
     let hmac_secret = &app_state.env.hmac_secret;
-    let mut mac = HmacSha256::new_from_slice(hmac_secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(hmac_secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(reference.as_bytes());
     let signature = hex::encode(mac.finalize().into_bytes());
-
 
     log::info!(
         "Initializing disbursement for user: {}, reference: {}",
@@ -881,16 +792,22 @@ pub async fn init_disburse_payment_handler(
 pub async fn confirm_disburse_payment_handler(
     app_state: web::Data<AppState>,
     req: HttpRequest,
-    body: web::Bytes
+    body: web::Bytes,
 ) -> impl Responder {
     // Verify HMAC signature from headers
-    let api_key = req.headers().get("X-Api-Key")
+    let api_key = req
+        .headers()
+        .get("X-Api-Key")
         .and_then(|value| value.to_str().ok());
-    let timestamp = req.headers().get("X-Timestamp")
+    let timestamp = req
+        .headers()
+        .get("X-Timestamp")
         .and_then(|value| value.to_str().ok());
-    let signature = req.headers().get("X-Signature")
+    let signature = req
+        .headers()
+        .get("X-Signature")
         .and_then(|value| value.to_str().ok());
-    
+
     if api_key.is_none() || timestamp.is_none() || signature.is_none() {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
@@ -901,11 +818,11 @@ pub async fn confirm_disburse_payment_handler(
             error: Some("Missing X-Api-Key, X-Timestamp, or X-Signature header".to_string()),
         });
     }
-    
+
     let api_key = api_key.unwrap();
     let timestamp = timestamp.unwrap();
     let signature = signature.unwrap();
-    
+
     // verify api_key
     if api_key != app_state.env.hmac_key {
         return HttpResponse::BadRequest().json(PaymentResult {
@@ -917,13 +834,13 @@ pub async fn confirm_disburse_payment_handler(
             error: Some("Unauthorized".to_string()),
         });
     }
-    
+
     // verify timestamp
     let current_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let request_timestamp: u64 = match timestamp.parse() {
         Ok(ts) => ts,
         Err(_) => {
@@ -937,7 +854,7 @@ pub async fn confirm_disburse_payment_handler(
             });
         }
     };
-    
+
     if current_timestamp.abs_diff(request_timestamp) > 300 {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
@@ -948,17 +865,17 @@ pub async fn confirm_disburse_payment_handler(
             error: Some("Timestamp outside acceptable window".to_string()),
         });
     }
-    
+
     // verify signature
     let payload = String::from_utf8_lossy(&body);
     let message = format!("{}{}", timestamp, payload);
- 
+
     let hmac_secret = &app_state.env.hmac_secret;
     let mut mac = HmacSha256::new_from_slice(hmac_secret.as_bytes())
         .expect("msg: HMAC can take key of any size");
     mac.update(message.as_bytes());
     let calculated_signature = hex::encode(mac.finalize().into_bytes());
-    
+
     if calculated_signature != signature {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
@@ -970,7 +887,7 @@ pub async fn confirm_disburse_payment_handler(
         });
     }
 
-        let request: ConfirmDisbursementRequest = match serde_json::from_slice(&body) {
+    let request: ConfirmDisbursementRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(e) => {
             return HttpResponse::BadRequest().json(PaymentResult {
@@ -983,7 +900,6 @@ pub async fn confirm_disburse_payment_handler(
             });
         }
     };
-
 
     let user_id = request.user_id.clone();
 
@@ -1032,7 +948,6 @@ pub async fn confirm_disburse_payment_handler(
         });
     }
 
-
     let pending_disbursement =
         match retrieve_pending_disbursement(&app_state, &request.reference, user_id).await {
             Ok(disbursement) => disbursement,
@@ -1048,23 +963,24 @@ pub async fn confirm_disburse_payment_handler(
             }
         };
 
-    let usdt_ngn_rate: i64 = match pricefeed::pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone()) {
-        Ok(rate) => {
-            log::info!("Current USDT to NGN rate: {}", rate);
-            rate as i64
-        },
-        Err(e) => {
-            log::error!("Failed to fetch USDT to NGN rate: {}", e);
-            return HttpResponse::InternalServerError().json(PaymentResult {
-                success: false,
-                reference: request.reference.clone(),
-                transaction_ref: None,
-                status: None,
-                message: "Failed to fetch USDT to NGN rate".to_string(),
-                error: Some(e.to_string()),
-            });
-        }
-    };
+    let usdt_ngn_rate: i64 =
+        match pricefeed::pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone()) {
+            Ok(rate) => {
+                log::info!("Current USDT to NGN rate: {}", rate);
+                rate as i64
+            }
+            Err(e) => {
+                log::error!("Failed to fetch USDT to NGN rate: {}", e);
+                return HttpResponse::InternalServerError().json(PaymentResult {
+                    success: false,
+                    reference: request.reference.clone(),
+                    transaction_ref: None,
+                    status: None,
+                    message: "Failed to fetch USDT to NGN rate".to_string(),
+                    error: Some(e.to_string()),
+                });
+            }
+        };
 
     let narration = Some("Services");
     let amount: i64 = request.amount.parse().expect("failed to parse amount");
@@ -1080,11 +996,8 @@ pub async fn confirm_disburse_payment_handler(
 
     println!(
         "Converting {} USDT to NGN at rate {}: {} NGN",
-        amount,
-        usdt_ngn_rate,
-        fiat_amount
+        amount, usdt_ngn_rate, fiat_amount
     );
-
 
     match disburse_payment(
         &app_state,
@@ -1100,34 +1013,32 @@ pub async fn confirm_disburse_payment_handler(
         Ok(disbursement) => {
             let payment_status = disbursement.status.clone();
             let monnify_reference = disbursement.reference.clone();
-            let transaction_result = sqlx::query_as::<_, Transactions>(
-                r#"
-                    INSERT INTO transactions (
-                        user_id, created_at, order_type, crypto_amount, crypto_type,
-                        fiat_amount, fiat_currency, payment_method, payment_status,
-                        tx_hash, reference
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                    RETURNING *
-                    "#,
-            )
-            .bind(&user_id)
-            .bind(Utc::now())
-            .bind(&pending_disbursement.order_type.clone())
-            .bind(&pending_disbursement.crypto_amount)
-            .bind(&pending_disbursement.crypto_symbol.clone())
-            .bind(fiat_amount)
-            .bind(&pending_disbursement.currency.clone())
-            .bind(&pending_disbursement.payment_method.clone())
-            .bind(&payment_status)
-            .bind(&request.transaction_hash.clone())
-            .bind(&monnify_reference)
-            .fetch_optional(&app_state.db)
-            .await;
+            let crypto_amount = Decimal::from_f64(pending_disbursement.crypto_amount)
+                .expect("Invalid float -> Decimal conversion");
+            let fiat_amount =
+                Decimal::from_i64(fiat_amount).expect("Invalid float -> Decimal conversion");
+
+            let new_tx = NewTransaction {
+                user_id: user_id.clone(),
+                order_type: pending_disbursement.order_type.clone(),
+                crypto_amount: crypto_amount,
+                crypto_type: pending_disbursement.crypto_symbol.clone(),
+                fiat_amount: fiat_amount,
+                fiat_currency: pending_disbursement.currency,
+                payment_method: pending_disbursement.payment_method.clone(),
+                payment_status: payment_status.clone(),
+                tx_hash: request.transaction_hash.clone(),
+                reference: monnify_reference.clone(),
+                settlement_status: None,
+                transaction_reference: None,
+                settlement_date: None,
+            };
+
+            let transaction_result = app_state.db.create_transaction(new_tx);
 
             match &transaction_result {
                 Ok(tx) => log::info!("Transaction saved successfully: {:?}", tx),
-                Err(e) => log::error!("Failed to save transaction to DB: {}", e),
+                Err(e) => log::error!("Failed to save transaction to DB: {:?}", e),
             }
 
             let mut redis_conn = match app_state.redis_pool.get().await {
