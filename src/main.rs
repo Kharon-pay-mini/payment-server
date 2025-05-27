@@ -47,7 +47,13 @@ async fn main() -> std::io::Result<()> {
 
     let config = Config::init();
 
-    let db = database::db::Database::new();
+    let db = match database::db::Database::new() {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("Failed to initialize DB: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     let redis_pool = init_redis_pool(&config.redis_url)
         .await
