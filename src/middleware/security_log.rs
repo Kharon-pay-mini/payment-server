@@ -1,3 +1,5 @@
+use crate::database::{db::AppError, user_security_log_db::UserSecurityLogsImpl};
+use crate::models::models::NewUserSecurityLog;
 use crate::{models::models::TokenClaims, AppState};
 use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
@@ -45,45 +47,29 @@ pub async fn security_logger_middleware(
                 let mut flagged_for_review = false;
 
                 if is_login_failure {
-                    let recent_failures = sqlx::query!(
-                        r#"
-                                SELECT SUM(failed_login_attempts) as total_failures
-                                FROM user_security_logs
-                                WHERE user_id = $1
-                            "#,
-                        user_id
-                    )
-                    .fetch_one(&db)
-                    .await
-                    .map(|row| row.total_failures.unwrap_or(0))
-                    .unwrap_or(0);
+                    let failures = db.get_user_total_failed_logins(user_id.unwrap());
 
-                    if recent_failures + failed_login_attempts >= 3 {
-                        flagged_for_review = true;
-                    }
+                    if let Ok(recent_failures) = failures {
+                        if recent_failures + failed_login_attempts >= 3 {
+                            flagged_for_review = true;
+                        }
 
-                    if method == "DELETE" && path.clone().contains("/users") {
-                        flagged_for_review = true;
+                        if method == "DELETE" && path.clone().contains("/users") {
+                            flagged_for_review = true;
+                        }
+
+                        let new_log = NewUserSecurityLog {
+                            user_id: user_id.unwrap().clone(),
+                            ip_address: ip_address.clone(),
+                            city: city.clone(),
+                            country: country.clone(),
+                            failed_login_attempts: failed_login_attempts as i32,
+                            flagged_for_review: flagged_for_review.clone(),
+                        };
+
+                        db.create_user_secutiry_log(new_log);
                     }
                 }
-
-                let _ = sqlx::query!(
-                    r#"
-                        INSERT INTO user_security_logs (
-                            user_id, ip_address, city, country,
-                            failed_login_attempts, flagged_for_review
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                    "#,
-                    user_id,
-                    ip_address,
-                    city,
-                    country,
-                    failed_login_attempts as i32,
-                    flagged_for_review
-                )
-                .execute(&db)
-                .await;
             }
         });
     }

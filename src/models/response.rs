@@ -10,7 +10,7 @@ pub struct FilteredUser {
     pub phone: Option<String>,
     pub last_logged_in: DateTime<Utc>,
     pub verified: bool,
-    pub role: Option<String>,
+    pub role: String,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
 }
@@ -77,7 +77,7 @@ pub struct FilteredUserSecurityLogs {
     pub ip_address: String,
     pub city: String,
     pub country: String,
-    pub failed_login_attempts: i64,
+    pub failed_login_attempts: i32,
     pub flagged_for_review: bool,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,

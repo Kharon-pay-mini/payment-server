@@ -3,13 +3,15 @@ use super::model::{
     MonnifyDisbursementResponseBody, MonnifyEventData, MonnifyResponse, MonnifyWebhookPayload,
     PendingDisbursement,
 };
-use crate::AppState;
+use crate::{database::transaction_db::TransactionImpl, models::models::NewTransaction, AppState};
 use actix_web::{web, HttpRequest, Result};
 use base64::Engine;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
+use num_traits::FromPrimitive;
 use redis::AsyncCommands;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use rust_decimal::Decimal;
 use sha2::Sha512;
 use uuid::Uuid;
 
@@ -343,7 +345,7 @@ pub async fn handle_successful_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -352,8 +354,6 @@ pub async fn handle_successful_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break; // Exit the loop since `scan_match` does not use cursors in this context
     }
 
     if !keys.is_empty() {
@@ -376,46 +376,32 @@ pub async fn handle_successful_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let result = sqlx::query(
-                    r#"
-                    UPDATE transactions
-                    SET payment_status = $1,
-                        updated_at = $2,
-                        transaction_reference = $3,
-                    WHERE user_id = $4
-                    "#,
-                )
-                .bind("COMPLETED")
-                .bind(Utc::now())
-                .bind(&event_data.transaction_reference)
-                .bind(&user_id)
-                .execute(&app_state.db)
-                .await
-                .map_err(|e| format!("Failed to update transaction: {}", e))?;
+                let rows_affected = app_state.db.update_transaction(
+                    user_id,
+                    "COMPLETED".to_string(),
+                    event_data.transaction_reference.clone(),
+                );
 
-                if result.rows_affected() == 0 {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO transactions (
-                            user_id, order_type, crypto_amount, crypto_type,
-                            fiat_amount, fiat_currency, payment_method, payment_status,
-                            reference, transaction_reference
-                    )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                        "#,
-                    )
-                    .bind(&user_id)
-                    .bind(&disbursement.order_type)
-                    .bind(&disbursement.crypto_amount)
-                    .bind(&disbursement.crypto_symbol)
-                    .bind(&disbursement.currency)
-                    .bind(&disbursement.payment_method)
-                    .bind("COMPLETED")
-                    .bind(&event_data.reference)
-                    .bind(&event_data.transaction_reference)
-                    .execute(&app_state.db)
-                    .await
-                    .map_err(|e| format!("Failed to create transaction: {}", e))?;
+                if rows_affected.unwrap() == 0 {
+                    let new_tx = NewTransaction {
+                        user_id: user_id.clone(),
+                        order_type: disbursement.order_type.clone(),
+                        crypto_amount: Decimal::from_f64(disbursement.crypto_amount)
+                            .expect("Invalid float -> Decimal conversion"),
+                        crypto_type: disbursement.crypto_symbol.clone(),
+                        fiat_amount: Decimal::from_f64(100000.0)
+                            .expect("Invalid float to decimal conversion"),
+                        fiat_currency: disbursement.currency.clone(),
+                        payment_method: disbursement.payment_method.clone(),
+                        payment_status: "COMPLETED".into(),
+                        reference: event_data.reference.clone(),
+                        transaction_reference: Some(event_data.transaction_reference.clone()),
+                        settlement_status: None,
+                        settlement_date: None,
+                        tx_hash: "0x00".to_string(),
+                    };
+
+                    app_state.db.create_transaction(new_tx);
                 }
 
                 redis_conn
@@ -427,24 +413,13 @@ pub async fn handle_successful_disbursement(
             }
         }
     } else {
-        let result = sqlx::query(
-            r#"
-            UPDATE transactions
-            SET payment_status = $1,
-                updated_at = $2,
-                reference = $3
-            WHERE transaction_reference = $4
-            "#,
-        )
-        .bind("COMPLETED")
-        .bind(Utc::now())
-        .bind(&event_data.reference)
-        .bind(&event_data.transaction_reference)
-        .execute(&app_state.db)
-        .await
-        .map_err(|e| format!("Failed to update transaction: {}", e))?;
+        let new_rows_affected = app_state.db.update_transaction_by_tx_ref(
+            event_data.transaction_reference.clone(),
+            "COMPLETED".to_string(),
+            event_data.reference.clone(),
+        );
 
-        if result.rows_affected() == 0 {
+        if new_rows_affected.unwrap() == 0 {
             log::warn!(
                 "No transaction found for reference: {}",
                 event_data.transaction_reference
@@ -478,7 +453,7 @@ pub async fn handle_failed_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -487,8 +462,6 @@ pub async fn handle_failed_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
@@ -511,22 +484,11 @@ pub async fn handle_failed_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                sqlx::query(
-                    r#"
-                    UPDATE transactions
-                    SET payment_status = $1,
-                        updated_at = $2,
-                        transaction_reference = $3
-                    WHERE user_id = $4
-                    "#,
-                )
-                .bind("FAILED")
-                .bind(Utc::now())
-                .bind(&event_data.transaction_reference)
-                .bind(&user_id)
-                .execute(&app_state.db)
-                .await
-                .map_err(|e| format!("Failed to update transaction: {}", e))?;
+                let rows_affected = app_state.db.update_transaction(
+                    user_id,
+                    "FAILED".to_string(),
+                    event_data.transaction_reference.clone(),
+                );
 
                 redis_conn
                     .del::<String, ()>(key)
@@ -544,20 +506,11 @@ pub async fn handle_failed_disbursement(
             "No pending disbursement found for reference: {}",
             event_data.reference
         );
-        sqlx::query(
-            r#"
-            UPDATE transactions
-            SET payment_status = $1,
-                updated_at = $2
-            WHERE transaction_reference = $3
-            "#,
-        )
-        .bind("FAILED")
-        .bind(Utc::now())
-        .bind(&event_data.transaction_reference)
-        .execute(&app_state.db)
-        .await
-        .map_err(|e| format!("Failed to update transaction: {}", e))?;
+
+        app_state.db.update_transaction_status_by_tx_ref(
+            event_data.transaction_reference.clone(),
+            "FAILED".to_string(),
+        );
     }
 
     Ok(())
@@ -585,7 +538,7 @@ pub async fn handle_pending_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -594,8 +547,6 @@ pub async fn handle_pending_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
@@ -618,23 +569,11 @@ pub async fn handle_pending_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                sqlx::query(
-                    r#"
-                    UPDATE transactions
-                    SET payment_status = $1,
-                        updated_at = $2,
-                        transaction_reference = $3
-                    WHERE user_id = $4
-                    "#,
-                )
-                .bind("PENDING")
-                .bind(Utc::now())
-                .bind(&event_data.transaction_reference)
-                .bind(&user_id)
-                .execute(&app_state.db)
-                .await
-                .map_err(|e| format!("Failed to update transaction: {}", e))?;
-
+                app_state.db.update_transaction(
+                    user_id,
+                    "PENDING".to_string(),
+                    event_data.transaction_reference.clone(),
+                );
                 log::info!("Updated disbursement as pending for user: {}", user_id);
             }
         }
@@ -643,20 +582,11 @@ pub async fn handle_pending_disbursement(
             "No pending disbursement found for reference: {}",
             event_data.reference
         );
-        sqlx::query(
-            r#"
-            UPDATE transactions
-            SET payment_status = $1,
-                updated_at = $2
-            WHERE transaction_reference = $3
-            "#,
-        )
-        .bind("PENDING")
-        .bind(Utc::now())
-        .bind(&event_data.transaction_reference)
-        .execute(&app_state.db)
-        .await
-        .map_err(|e| format!("Failed to update transaction: {}", e))?;
+
+        app_state.db.update_transaction_status_by_tx_ref(
+            event_data.transaction_reference.clone(),
+            "PENDING".to_string(),
+        );
     }
 
     Ok(())
@@ -684,7 +614,7 @@ pub async fn handle_processing_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -693,8 +623,6 @@ pub async fn handle_processing_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
@@ -717,22 +645,11 @@ pub async fn handle_processing_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                sqlx::query(
-                    r#"
-                    UPDATE transactions
-                    SET payment_status = $1,
-                        updated_at = $2,
-                        transaction_reference = $3
-                    WHERE user_id = $4
-                    "#,
-                )
-                .bind("PROCESSING")
-                .bind(Utc::now())
-                .bind(&event_data.transaction_reference)
-                .bind(&user_id)
-                .execute(&app_state.db)
-                .await
-                .map_err(|e| format!("Failed to update transaction: {}", e))?;
+                app_state.db.update_transaction(
+                    user_id,
+                    "PROCESSING".to_string(),
+                    event_data.transaction_reference.clone(),
+                );
 
                 log::info!("Updated disbursement as processing for user: {}", user_id);
             }
@@ -742,20 +659,11 @@ pub async fn handle_processing_disbursement(
             "No pending disbursement found for reference: {}",
             event_data.reference
         );
-        sqlx::query(
-            r#"
-            UPDATE transactions
-            SET payment_status = $1,
-                updated_at = $2
-            WHERE transaction_reference = $3 OR tx_hash = $4
-            "#,
-        )
-        .bind("PROCESSING")
-        .bind(Utc::now())
-        .bind(&event_data.transaction_reference)
-        .execute(&app_state.db)
-        .await
-        .map_err(|e| format!("Failed to update transaction: {}", e))?;
+
+        app_state.db.update_transaction_status_by_tx_ref(
+            event_data.transaction_reference.clone(),
+            "PROCESSING".to_string(),
+        );
     }
 
     Ok(())
@@ -775,31 +683,24 @@ pub async fn handle_settlement_completed(
         event_data.reference, event_data.transaction_reference
     );
 
-    let result = sqlx::query(
-        r#"
-        UPDATE transactions
-        SET settlement_status = 'SETTLED', 
-            settlement_date = $1,
-            transaction_reference = $2
-        WHERE reference = $3 
-        "#,
-    )
-    .bind(Utc::now())
-    .bind(&event_data.transaction_reference)
-    .bind(&event_data.reference)
-    .execute(&app_state.db)
-    .await
-    .map_err(|e| format!("Failed to update transaction: {}", e))?;
+    let rows_affected = app_state
+        .db
+        .mark_transaction_settled_by_ref(
+            event_data.transaction_reference.clone(),
+            event_data.reference.clone(),
+            "SETTLED".to_string(),
+        )
+        .unwrap();
 
-    if result.rows_affected() == 0 {
+    if rows_affected.clone() == 0 {
         log::warn!(
             "No transactions found for settlement with transaction_ref: {}",
             event_data.transaction_reference
         );
     } else {
         log::info!(
-            "Updated {} transactions for settlement with transaction_ref: {}",
-            result.rows_affected(),
+            "Updated {} transactions for settlement with transaction_ref: {:?}",
+            rows_affected.clone(),
             event_data.transaction_reference
         );
     }
