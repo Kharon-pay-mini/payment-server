@@ -247,7 +247,7 @@ async fn update_user_wallet_handler(
             match data.db.create_user_wallet(wallet) {
                 Ok(wallet) => {
                     let filtered_wallet = filtered_wallet_record(&wallet);
-                    return HttpResponse::Created().json(filtered_wallet);
+                    HttpResponse::Created().json(filtered_wallet)
                 }
                 Err(e) => {
                     eprintln!("Failed to create wallet: {:?}", e);
@@ -316,7 +316,7 @@ async fn update_transaction_handler(
             match data.db.create_transaction(new_tx) {
                 Ok(transaction) => {
                     let filtered_transaction = filtered_transaction_record(&transaction);
-                    return HttpResponse::Created().json(filtered_transaction);
+                    HttpResponse::Created().json(filtered_transaction)
                 }
                 Err(e) => {
                     eprintln!("Failed to create transaction: {:?}", e);

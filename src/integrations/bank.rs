@@ -345,7 +345,7 @@ pub async fn handle_successful_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -354,8 +354,6 @@ pub async fn handle_successful_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break; // Exit the loop since `scan_match` does not use cursors in this context
     }
 
     if !keys.is_empty() {
@@ -455,7 +453,7 @@ pub async fn handle_failed_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -464,8 +462,6 @@ pub async fn handle_failed_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
@@ -542,7 +538,7 @@ pub async fn handle_pending_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -551,8 +547,6 @@ pub async fn handle_pending_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
@@ -620,7 +614,7 @@ pub async fn handle_processing_disbursement(
 
     let mut keys = Vec::new();
 
-    loop {
+    {
         let mut iter = redis_conn
             .scan_match::<_, String>(format!("pending disbursement: {}:*", event_data.reference))
             .await
@@ -629,8 +623,6 @@ pub async fn handle_processing_disbursement(
         while let Some(key) = iter.next_item().await {
             keys.push(key);
         }
-
-        break;
     }
 
     if !keys.is_empty() {
