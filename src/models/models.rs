@@ -164,13 +164,14 @@ pub struct UserWalletSchema {
 #[derive(Debug, Deserialize)]
 pub struct TransactionSchema {
     pub order_type: String,
-    pub crypto_amount: f64,
+    pub crypto_amount: Decimal,
     pub crypto_type: String,
-    pub fiat_amount: f64,
+    pub fiat_amount: Decimal,
     pub fiat_currency: String,
     pub payment_method: String,
     pub payment_status: String,
     pub tx_hash: String,
+    pub reference: String,
 }
 
 #[derive(Debug, Deserialize)]
