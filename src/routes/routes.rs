@@ -1114,6 +1114,27 @@ pub async fn monnify_webhook_handler(
     }
 }
 
+#[get("/rates/usd-ngn-rate")]
+async fn get_usd_ngn_rate_handler(
+    data: web::Data<AppState>
+) -> impl Responder {
+    match pricefeed::pricefeed::get_current_usdt_ngn_rate(data.price_feed.clone()) {
+        Ok(rate) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "data": {
+                "usd_ngn_rate": rate
+            }
+        })),
+        Err(e) => {
+            eprintln!("Failed to fetch USD to NGN rate: {}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve USD to NGN rate"
+            }))
+        }
+    }
+}
+
 /*
 TODO after MVP is completed
 #[get("/stats")]
