@@ -1,14 +1,8 @@
-[providers]
-rust = "1.75.0"
-
 [phases.setup]
-nixPkgs = ['gcc', 'pkg-config', 'openssl', 'postgresql', 'libpq', 'openssl.dev', 'pkg-config']
+nixPkgs = ['gcc', 'pkg-config', 'openssl', 'postgresql']
 
 [phases.build]
-cmds = [
-  'export PKG_CONFIG_PATH=/nix/store/*-openssl-*/lib/pkgconfig:/nix/store/*-libpq-*/lib/pkgconfig:$PKG_CONFIG_PATH',
-  'cargo build --release'
-]
+cmds = ['cargo build --release']
 
 [start]
 cmd = './target/release/kharon-server'
