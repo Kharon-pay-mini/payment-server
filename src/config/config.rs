@@ -19,8 +19,6 @@ pub struct Config {
     pub flutterwave_payment_url: String,
     pub flutterwave_callback_url: String,
     pub flutterwave_secret_hash: String,
-    pub flutterwave_test_key: String,
-    pub flutterwave_test_secret_hash: String,
 }
 
 impl Config {
@@ -48,15 +46,13 @@ impl Config {
         let hmac_key = std::env::var("HMAC_KEY").expect("HMAC_KEY must be set");
         let flutterwave_secret_key =
             std::env::var("FLUTTERWAVE_SECRET_KEY").expect("FLUTTERWAVE_SECRET_KEY must be set");
-        let flutterwave_public_key =
-            std::env::var("FLUTTERWAVE_PUBLIC_KEY").expect("FLUTTERWAVE_PUBLIC_KEY must be set");
         let flutterwave_payment_url =
             std::env::var("FLUTTERWAVE_PAYMENT_URL").expect("FLUTTERWAVE_PAYMENT_URL must be set");
         let flutterwave_callback_url = std::env::var("FLUTTERWAVE_CALLBACK_URL")
             .expect("FLUTTERWAVE_CALLBACK_URL must be set");
         let flutterwave_secret_hash = std::env::var("FLUTTERWAVE_SECRET_HASH")
             .expect("FLUTTERWAVE_SECRET_HASH must be set");
-        let flutterwave_test_key =
+        let flutterwave_test_secret_key =
             std::env::var("FLUTTERWAVE_TEST_SECRET_KEY").expect("FLUTTERWAVE_TEST_KEY must be set");
         let flutterwave_test_secret_hash =
             std::env::var("FLUTTERWAVE_TEST_SECRET_HASH").expect("FLUTTERWAVE_TEST_SECRET_HASH must be set");
@@ -80,9 +76,7 @@ impl Config {
             flutterwave_secret_key,
             flutterwave_payment_url,
             flutterwave_callback_url,
-            flutterwave_secret_hash,
-            flutterwave_test_key,
-            flutterwave_test_secret_hash,
+            flutterwave_secret_hash
         }
     }
 }
