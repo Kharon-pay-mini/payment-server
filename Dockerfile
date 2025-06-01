@@ -1,7 +1,4 @@
-# === Build stage ===
-FROM rust:1.87-slim AS builder
-
-ENV CARGO_BIN_DIR=/cargo-bin
+FROM rust:1.75 as builder
 
 # Install dependencies including CA certificates
 RUN apt-get update && apt-get install -y \
@@ -28,12 +25,13 @@ COPY . .
 
 RUN cargo build --release
 
-
-# === Runtime stage ===
+# Final stage
 FROM debian:bookworm-slim
 
 # Install runtime dependencies including CA certificates and SSL
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
     libpq5 \
     openssl \
     ca-certificates && \
