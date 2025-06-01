@@ -3,6 +3,13 @@ use crate::{
         db::AppError, otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
         user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
     },
+    integrations::{
+        flutterwave::{
+            disburse_payment_using_flutterwave, fetch_banks_via_flutterwave,
+            process_flutterwave_webhook, verify_account_via_flutterwave,
+        },
+        model::FlutterwaveWebhookPayload,
+    },
     models::models::{
         CreateUserSchema, NewOtp, NewTransaction, NewUser, NewUserSecurityLog, NewUserWallet, Otp,
         OtpSchema, TokenClaims, Transaction, TransactionSchema, User, UserSecurityLog,
@@ -697,7 +704,7 @@ pub async fn init_disburse_payment_handler(
         reference
     );
 
-    let banks = match fetch_banks_via_paystack(&app_state).await {
+    let banks = match fetch_banks_via_flutterwave(&app_state).await {
         Ok(banks) => banks,
         Err(e) => {
             return HttpResponse::InternalServerError().json(InitDisbursementResponse {
@@ -728,7 +735,7 @@ pub async fn init_disburse_payment_handler(
         }
     };
 
-    match verify_account_via_paystack(&app_state, &request.account_number, &bank_code).await {
+    match verify_account_via_flutterwave(&app_state, &request.account_number, &bank_code).await {
         Ok(account_details) => {
             let crypto_amount = request.crypto_transaction.amount;
             let crypto_symbol = request.crypto_transaction.token_symbol.clone();
@@ -747,6 +754,7 @@ pub async fn init_disburse_payment_handler(
                 signature: signature.clone(),
             };
 
+            //TODO: PERIST DATA ON REDIS TILL PAYMENT IS CONFIRMED
             if let Err(e) =
                 store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement)
                     .await
@@ -999,7 +1007,7 @@ pub async fn confirm_disburse_payment_handler(
         amount, usdt_ngn_rate, fiat_amount
     );
 
-    match disburse_payment(
+    match disburse_payment_using_flutterwave(
         &app_state,
         &request.reference,
         fiat_amount,
@@ -1007,6 +1015,7 @@ pub async fn confirm_disburse_payment_handler(
         &pending_disbursement.bank_code,
         &pending_disbursement.account_number,
         &pending_disbursement.currency,
+        Some(&pending_disbursement.account_name),
     )
     .await
     {
@@ -1114,10 +1123,57 @@ pub async fn monnify_webhook_handler(
     }
 }
 
-#[get("/rates/usd-ngn-rate")]
-async fn get_usd_ngn_rate_handler(
-    data: web::Data<AppState>
+#[post("/webhooks/flutterwave")]
+pub async fn flutterwave_webhook_handler(
+    app_state: web::Data<AppState>,
+    body: web::Bytes,
+    req: HttpRequest,
 ) -> impl Responder {
+    let header_secret_hash = match req.headers().get("verif-hash") {
+        Some(sig) => match sig.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to parse signature header: {}", e);
+                return HttpResponse::BadRequest().body(format!("Invalid signature header: {}", e));
+            }
+        },
+        None => {
+            log::warn!("Missing signature header in Flutterwave webhook");
+            return HttpResponse::Unauthorized().body("Missing signature");
+        }
+    };
+
+    if !(header_secret_hash == &app_state.env.flutterwave_secret_hash) {
+        log::warn!("Invalid Flutterwave webhook signature received");
+        println!("Invalid Flutterwave webhook signature received");
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    let payload: FlutterwaveWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(e) => {
+            log::error!("Failed to parse Flutterwave webhook payload: {}", e);
+            return HttpResponse::BadRequest().body(format!("Invalid payload: {}", e));
+        }
+    };
+
+    log::info!(
+        "Processing Flutterwave webhook: event={}, status={}",
+        payload.event,
+        payload.data.status
+    );
+
+    match process_flutterwave_webhook(&app_state, payload).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            log::error!("Failed to process Flutterwave webhook: {}", e);
+            HttpResponse::InternalServerError().body(format!("Error processing webhook: {}", e))
+        }
+    }
+}
+
+#[get("/rates/usd-ngn-rate")]
+async fn get_usd_ngn_rate_handler(data: web::Data<AppState>) -> impl Responder {
     match pricefeed::pricefeed::get_current_usdt_ngn_rate(data.price_feed.clone()) {
         Ok(rate) => HttpResponse::Ok().json(json!({
             "status": "success",

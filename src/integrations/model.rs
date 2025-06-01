@@ -7,9 +7,6 @@ pub struct Bank {
     id: i64,
     pub name: String,
     pub code: String,
-    pub active: bool,
-    #[serde(rename = "country")]
-    pub country_code: String,
     #[serde(rename = "type")]
     pub bank_type: Option<String>,
 }
@@ -24,6 +21,13 @@ pub struct CryptoTransaction {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BankApiResponse<T> {
     pub status: bool,
+    pub message: String,
+    pub data: T,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FlutterwaveBankApiResponse<T> {
+    pub status: String,
     pub message: String,
     pub data: T,
 }
@@ -203,4 +207,78 @@ pub struct MonnifyWebhookPayload {
     pub event_type: String,
     #[serde(rename = "eventData")]
     pub event_data: MonnifyEventData,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FlutterwaveTransferRequest {
+    pub account_bank: String,
+    pub account_number: String,
+    pub amount: i64,
+    pub debit_currency: String,
+    pub reference: String,
+    pub narration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beneficiary_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
+}
+
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FlutterwaveTransferData {
+    pub id: u64,
+    pub account_number: String,
+    pub bank_code: String,
+    pub full_name: String,
+    pub created_at: String,
+    pub currency: String,
+    pub debit_currency: String,
+    pub amount: i64,
+    pub fee: i64,
+    pub status: String,
+    pub reference: String,
+    pub narration: String,
+    pub complete_message: String,
+    pub requires_approval: u8,
+    pub is_approved: u8,
+    pub bank_name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FlutterwaveTransferResponse {
+    pub status: String,
+    pub message: String,
+    pub data: FlutterwaveTransferData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FlutterwaveWebhookPayload {
+    pub event: String,
+    pub data: FlutterwaveWebhookData,
+    #[serde(rename = "event.type")]
+    pub event_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FlutterwaveWebhookData {
+    pub id: u64,
+    pub account_number: String,
+    pub bank_code: String,
+    pub full_name: Option<String>,
+    pub created_at: String,
+    pub currency: String,
+    pub debit_currency: Option<String>,
+    pub amount: i64,
+    pub fee: Option<i64>,
+    pub status: String,
+    pub reference: String,
+    pub narration: Option<String>,
+    pub complete_message: Option<String>,
+    pub requires_approval: Option<u8>,
+    pub is_approved: Option<u8>,
+    pub bank_name: Option<String>,
+    #[serde(rename = "tx_ref")]
+    pub tx_ref: Option<String>,
 }
