@@ -3,3 +3,4 @@
 
 # Diesel
 diesel_locks/
+schema_only.sql
