@@ -6,7 +6,6 @@ use super::model::{
 use crate::{database::transaction_db::TransactionImpl, models::models::NewTransaction, AppState};
 use actix_web::{web, HttpRequest, Result};
 use base64::Engine;
-use chrono::Utc;
 use hmac::{Hmac, Mac};
 use num_traits::FromPrimitive;
 use redis::AsyncCommands;

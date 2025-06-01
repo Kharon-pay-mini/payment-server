@@ -160,7 +160,7 @@ pub async fn init_price_feed() -> Arc<Mutex<PriceData>> {
 
     let price_data_clone = price_data.clone();
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(60));
+        let mut interval = time::interval(Duration::from_secs(120));
         loop {
             interval.tick().await;
             update_price_data(price_data_clone.clone()).await;
