@@ -52,11 +52,8 @@ impl Config {
             .expect("FLUTTERWAVE_CALLBACK_URL must be set");
         let flutterwave_secret_hash = std::env::var("FLUTTERWAVE_SECRET_HASH")
             .expect("FLUTTERWAVE_SECRET_HASH must be set");
-        let flutterwave_test_secret_key =
-            std::env::var("FLUTTERWAVE_TEST_SECRET_KEY").expect("FLUTTERWAVE_TEST_KEY must be set");
-        let flutterwave_test_secret_hash =
-            std::env::var("FLUTTERWAVE_TEST_SECRET_HASH").expect("FLUTTERWAVE_TEST_SECRET_HASH must be set");
-
+        
+        
         Config {
             database_url,
             jwt_secret,
