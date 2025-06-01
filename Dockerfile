@@ -16,19 +16,18 @@ RUN cargo install diesel_cli --no-default-features --features postgres --root $C
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
-RUN rm -rf src
+# Copy only Cargo.toml first
+COPY Cargo.toml ./
 
-COPY . .
+# Copy source code
+COPY src ./src
 
+# Build without using the lock file (let Cargo resolve dependencies)
 RUN cargo build --release
 
 # Final stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies including CA certificates and SSL
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
