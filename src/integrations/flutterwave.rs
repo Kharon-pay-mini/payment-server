@@ -285,7 +285,6 @@ async fn handle_successful_transfer(
     Ok(())
 }
 
-
 async fn handle_reversed_transfer(
     app_state: &web::Data<AppState>,
     data: &FlutterwaveWebhookData,
@@ -368,8 +367,6 @@ async fn handle_reversed_transfer(
     Ok(())
 }
 
-
-
 async fn handle_failed_transfer(
     app_state: &web::Data<AppState>,
     data: &FlutterwaveWebhookData,
@@ -437,7 +434,7 @@ async fn handle_failed_transfer(
                     user_id
                 );
 
-                 println!(
+                println!(
                     "Successfully marked disbursement as failed for user: {}",
                     user_id
                 );
@@ -456,7 +453,6 @@ async fn handle_failed_transfer(
 
     Ok(())
 }
-
 
 async fn handle_pending_transfer(
     app_state: &web::Data<AppState>,

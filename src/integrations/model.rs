@@ -209,7 +209,6 @@ pub struct MonnifyWebhookPayload {
     pub event_data: MonnifyEventData,
 }
 
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FlutterwaveTransferRequest {
     pub account_bank: String,
@@ -223,8 +222,6 @@ pub struct FlutterwaveTransferRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_url: Option<String>,
 }
-
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FlutterwaveTransferData {

@@ -50,10 +50,9 @@ impl Config {
             std::env::var("FLUTTERWAVE_PAYMENT_URL").expect("FLUTTERWAVE_PAYMENT_URL must be set");
         let flutterwave_callback_url = std::env::var("FLUTTERWAVE_CALLBACK_URL")
             .expect("FLUTTERWAVE_CALLBACK_URL must be set");
-        let flutterwave_secret_hash = std::env::var("FLUTTERWAVE_SECRET_HASH")
-            .expect("FLUTTERWAVE_SECRET_HASH must be set");
-        
-        
+        let flutterwave_secret_hash =
+            std::env::var("FLUTTERWAVE_SECRET_HASH").expect("FLUTTERWAVE_SECRET_HASH must be set");
+
         Config {
             database_url,
             jwt_secret,
@@ -73,7 +72,7 @@ impl Config {
             flutterwave_secret_key,
             flutterwave_payment_url,
             flutterwave_callback_url,
-            flutterwave_secret_hash
+            flutterwave_secret_hash,
         }
     }
 }
