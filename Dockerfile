@@ -1,4 +1,4 @@
-FROM rust:1.75 as builder
+FROM rust:1.82 as builder
 
 # Install dependencies including CA certificates
 RUN apt-get update && apt-get install -y \
@@ -16,13 +16,10 @@ RUN cargo install diesel_cli --no-default-features --features postgres --root $C
 
 WORKDIR /app
 
-# Copy only Cargo.toml first
-COPY Cargo.toml ./
+# Copy everything
+COPY . .
 
-# Copy source code
-COPY src ./src
-
-# Build without using the lock file (let Cargo resolve dependencies)
+# Build the application
 RUN cargo build --release
 
 # Final stage
