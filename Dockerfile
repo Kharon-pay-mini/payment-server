@@ -1,4 +1,3 @@
-# Use official Rust image
 FROM rust:1.70 as builder
 
 # Install system dependencies
@@ -9,17 +8,10 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
 WORKDIR /app
 
-# Copy dependency files
-COPY Cargo.toml Cargo.lock ./
-
-# Build dependencies first (for Docker layer caching)
-RUN cargo fetch --locked
-
-# Copy actual source code
-COPY src ./src
+# Copy everything
+COPY . .
 
 # Build the application
 RUN cargo build --release
@@ -37,5 +29,4 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY --from=builder /app/target/release/kharon-server ./kharon-server
 
-# Run the application
 CMD ["./kharon-server"]
