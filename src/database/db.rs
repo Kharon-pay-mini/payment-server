@@ -43,7 +43,11 @@ impl Database {
             .build(manager)
             .map_err(DatabaseSetupError::DbConnectionError)?;
 
-        run_migrations(&pool)?;
+        // Only run migrations in development
+        let env = std::env::var("APP_ENV").unwrap_or_else(|_| "prod".into());
+        if env == "dev" {
+            run_migrations(&pool)?;
+        }
 
         Ok(Database { pool })
     }
