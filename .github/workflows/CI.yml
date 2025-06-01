@@ -58,6 +58,3 @@ jobs:
 
       #   - name: Lint
       #     run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Build Docker image
-        run: docker build -t kharon-server .
