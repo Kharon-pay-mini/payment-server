@@ -3,6 +3,10 @@ name = "kharon-server"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "kharon-server"
+path = "src/main.rs"
+
 [dependencies]
 actix-cors = "0.7.1"
 actix-web = "4.10.2"
