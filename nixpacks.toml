@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ['gcc', 'pkg-config', 'openssl', 'postgresql']
+nixPkgs = ['gcc', 'pkg-config', 'openssl.dev', 'postgresql.dev', 'glibc', 'stdenv.cc.cc.lib']
 
 [phases.build]
 cmds = ['cargo build --release']
