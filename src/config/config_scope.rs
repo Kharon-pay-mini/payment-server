@@ -1,7 +1,7 @@
 use actix_web::web;
 
 use crate::routes::routes::{
-    confirm_disburse_payment_handler, create_user_handler, fetch_banks_handler,
+    check_health, confirm_disburse_payment_handler, create_user_handler, fetch_banks_handler,
     flutterwave_webhook_handler, get_transaction_handler, get_usd_ngn_rate_handler,
     get_user_handler, get_user_logs_handler, get_wallet_handler, init_disburse_payment_handler,
     monnify_webhook_handler, request_otp_handler, update_transaction_handler,
@@ -25,6 +25,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(confirm_disburse_payment_handler)
         .service(monnify_webhook_handler)
         .service(get_usd_ngn_rate_handler)
+        .service(check_health)
         .service(flutterwave_webhook_handler);
 
     conf.service(scope);

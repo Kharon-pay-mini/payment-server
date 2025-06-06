@@ -7,10 +7,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/kharon-server:${{ github.ref_name }}
+  GHCR_IMAGE: ghcr.io/kharon-labs/kharon-server:${{ github.ref_name }}
 
 jobs:
   build-test-push:
+    permissions:
+      contents: write
+      packages: write
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -50,38 +53,62 @@ jobs:
           cargo build --release
           cargo test --release
 
-      - name: Run migrations
-        run: |
-          cargo install diesel_cli --no-default-features --features postgres
-          diesel migration run --database-url ${{ secrets.PROD_DATABASE_URL }}
+      # - name: Run migrations
+      #   run: |
+      #     cargo install diesel_cli --no-default-features --features postgres
+      #     diesel migration run --database-url ${{ secrets.PROD_DATABASE_URL }}
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      # - name: Trigger Render Deploy via API
+      #   id: deploy
+      #   run: |
+      #     RESPONSE=$(curl -s -X POST https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys \
+      #       -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+      #       -H "Accept: application/json")
+
+      #     DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.id')
+      #     echo "Triggered Deploy ID: $DEPLOY_ID"
+
+      #     # Poll for status
+      #     for i in {1..50}; do
+      #       STATUS=$(curl -s https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID \
+      #         -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" | jq -r '.status')
+
+      #       echo "Status: $STATUS"
+
+      #       if [[ "$STATUS" == "live" ]]; then
+      #         echo "✅ Deploy succeeded"
+      #         exit 0
+      #       elif [[ "$STATUS" == "failed" ]]; then
+      #         echo "❌ Deploy failed"
+      #         exit 1
+      #       fi
+
+      #       sleep 20
+      #     done
+
+      #     echo "Timed out waiting for deployment"
+      #     exit 1
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ env.GHCR_IMAGE }}
-          labels: |
-            org.opencontainers.image.source=${{ github.repository_url }}
-
-      # - name: Deploy to Railway
-      #   uses: railwayapp/action@v1
+      # - name: Log in to GHCR
+      #   uses: docker/login-action@v3
       #   with:
-      #     service: kharon-server-backend
-      #     environment: production
-      #     token: ${{ secrets.RAILWAY_TOKEN }}
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Create GitHub Release
-      #   uses: softprops/action-gh-release@v1
+      # - name: Build Docker image
+      #   uses: docker/build-push-action@v5
       #   with:
-      #     tag_name: ${{ github.ref_name }}
-      #     name: Release ${{ github.ref_name }}
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     context: .
+      #     push: true
+      #     tags: ${{ env.GHCR_IMAGE }}
+      #     labels: |
+      #       org.opencontainers.image.source=${{ github.repository_url }}

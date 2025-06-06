@@ -1199,7 +1199,7 @@ async fn get_stats_handler(
 }
  */
 
-#[get("/healthz")]
+#[get("/healtz")]
 async fn check_health(_data: web::Data<AppState>) -> impl Responder {
     let json_response = serde_json::json!({
         "status": "success",

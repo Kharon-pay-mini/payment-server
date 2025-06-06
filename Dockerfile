@@ -16,7 +16,13 @@ RUN cargo install diesel_cli --no-default-features --features postgres --root $C
 
 WORKDIR /app
 
-# Copy everything
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release
+RUN rm -rf src
+
 COPY . .
 
 # Build the application
@@ -36,12 +42,13 @@ RUN apt-get update && apt-get install -y \
 
 RUN useradd -m appuser
 
-COPY --from=builder /app/target/release/kharon-server-rs /usr/local/bin/app
+COPY --from=builder /app/target/release/kharon-server /usr/local/bin/app
 COPY --from=builder /cargo-bin/bin/diesel /usr/local/bin/diesel
 # Copy CA certificates from builder (redundant but ensures consistency)
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-COPY .env /app/.env
+# script to check if .env exists and copy it
+RUN if [ -f .env ]; then cp .env /app/.env; else echo ".env file not found, skipping copy."; fi
 
 USER appuser
 WORKDIR /app
