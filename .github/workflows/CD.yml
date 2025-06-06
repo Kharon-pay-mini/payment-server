@@ -71,17 +71,17 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.repository_url }}
 
-      - name: Deploy to Railway
-        uses: railwayapp/action@v1
-        with:
-          service: kharon-server-backend
-          environment: production
-          token: ${{ secrets.RAILWAY_TOKEN }}
+      # - name: Deploy to Railway
+      #   uses: railwayapp/action@v1
+      #   with:
+      #     service: kharon-server-backend
+      #     environment: production
+      #     token: ${{ secrets.RAILWAY_TOKEN }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Create GitHub Release
+      #   uses: softprops/action-gh-release@v1
+      #   with:
+      #     tag_name: ${{ github.ref_name }}
+      #     name: Release ${{ github.ref_name }}
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
