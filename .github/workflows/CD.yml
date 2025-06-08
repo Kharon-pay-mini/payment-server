@@ -53,41 +53,41 @@ jobs:
           cargo build --release
           cargo test --release
 
-      # - name: Run migrations
-      #   run: |
-      #     cargo install diesel_cli --no-default-features --features postgres
-      #     diesel migration run --database-url ${{ secrets.PROD_DATABASE_URL }}
+      - name: Run migrations
+        run: |
+          cargo install diesel_cli --no-default-features --features postgres
+          diesel migration run --database-url ${{ secrets.PROD_DATABASE_URL }}
 
-      # - name: Trigger Render Deploy via API
-      #   id: deploy
-      #   run: |
-      #     RESPONSE=$(curl -s -X POST https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys \
-      #       -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-      #       -H "Accept: application/json")
+      - name: Trigger Render Deploy via API
+        id: deploy
+        run: |
+          RESPONSE=$(curl -s -X POST https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Accept: application/json")
 
-      #     DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.id')
-      #     echo "Triggered Deploy ID: $DEPLOY_ID"
+          DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.id')
+          echo "Triggered Deploy ID: $DEPLOY_ID"
 
-      #     # Poll for status
-      #     for i in {1..50}; do
-      #       STATUS=$(curl -s https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID \
-      #         -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" | jq -r '.status')
+          # Poll for status
+          for i in {1..50}; do
+            STATUS=$(curl -s https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID \
+              -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" | jq -r '.status')
 
-      #       echo "Status: $STATUS"
+            echo "Status: $STATUS"
 
-      #       if [[ "$STATUS" == "live" ]]; then
-      #         echo "✅ Deploy succeeded"
-      #         exit 0
-      #       elif [[ "$STATUS" == "failed" ]]; then
-      #         echo "❌ Deploy failed"
-      #         exit 1
-      #       fi
+            if [[ "$STATUS" == "live" ]]; then
+              echo "✅ Deploy succeeded"
+              exit 0
+            elif [[ "$STATUS" == "failed" ]]; then
+              echo "❌ Deploy failed"
+              exit 1
+            fi
 
-      #       sleep 20
-      #     done
+            sleep 20
+          done
 
-      #     echo "Timed out waiting for deployment"
-      #     exit 1
+          echo "Timed out waiting for deployment"
+          exit 1
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -97,18 +97,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Log in to GHCR
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ghcr.io
-      #     username: ${{ github.actor }}
-      #     password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Build Docker image
-      #   uses: docker/build-push-action@v5
-      #   with:
-      #     context: .
-      #     push: true
-      #     tags: ${{ env.GHCR_IMAGE }}
-      #     labels: |
-      #       org.opencontainers.image.source=${{ github.repository_url }}
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.GHCR_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository_url }}
