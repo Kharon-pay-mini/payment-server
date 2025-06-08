@@ -27,24 +27,24 @@ impl Default for PriceData {
     }
 }
 
-async fn get_binance_price() -> Result<f64> {
-    let client = Client::new();
-    let response = client
-        .get("https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN")
-        .send()
-        .await?;
+// async fn get_binance_price() -> Result<f64> {
+//     let client = Client::new();
+//     let response = client
+//         .get("https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN")
+//         .send()
+//         .await?;
 
-    if response.status().is_success() {
-        let data: serde_json::Value = response.json().await?;
-        let price = data["price"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Binance: invalid price format"))?
-            .parse::<f64>()?;
-        Ok(price)
-    } else {
-        Err(anyhow!("Binance API error: {}", response.status()))
-    }
-}
+//     if response.status().is_success() {
+//         let data: serde_json::Value = response.json().await?;
+//         let price = data["price"]
+//             .as_str()
+//             .ok_or_else(|| anyhow!("Binance: invalid price format"))?
+//             .parse::<f64>()?;
+//         Ok(price)
+//     } else {
+//         Err(anyhow!("Binance API error: {}", response.status()))
+//     }
+// }
 
 async fn get_cryptocompare_price() -> Result<f64> {
     let client = Client::new();
@@ -64,46 +64,46 @@ async fn get_cryptocompare_price() -> Result<f64> {
     }
 }
 
-async fn get_quidax_price() -> Result<f64> {
-    let client = Client::new();
-    let response = client
-        .get("https://www.quidax.com/api/v1/markets/usdtngn/ticker")
-        .send()
-        .await?;
+// async fn get_quidax_price() -> Result<f64> {
+//     let client = Client::new();
+//     let response = client
+//         .get("https://www.quidax.com/api/v1/markets/usdtngn/ticker")
+//         .send()
+//         .await?;
 
-    println!("Quidax Response: {:?}", response);
+//     println!("Quidax Response: {:?}", response);
 
-    if response.status().is_success() {
-        let data: serde_json::Value = response.json().await?;
-        let price = data["ticker"]["last"]
-            .as_str()
-            .and_then(|s| s.parse::<f64>().ok())
-            .ok_or_else(|| anyhow!("Quidax: Invalid price format"))?;
-        Ok(price)
-    } else {
-        Err(anyhow!("Quidax API error: {}", response.status()))
-    }
-}
+//     if response.status().is_success() {
+//         let data: serde_json::Value = response.json().await?;
+//         let price = data["ticker"]["last"]
+//             .as_str()
+//             .and_then(|s| s.parse::<f64>().ok())
+//             .ok_or_else(|| anyhow!("Quidax: Invalid price format"))?;
+//         Ok(price)
+//     } else {
+//         Err(anyhow!("Quidax API error: {}", response.status()))
+//     }
+// }
 
 pub async fn update_price_data(price_data: Arc<Mutex<PriceData>>) {
     let mut sources = Vec::new();
     let mut sum = 0.0;
     let mut count = 0;
 
-    match get_binance_price().await {
-        std::result::Result::Ok(price) => {
-            sources.push(SourcePrice {
-                source: "Binance".to_string(),
-                price,
-            });
-            sum += price;
-            count += 1;
-            println!("Binance price: {}", price);
-        }
-        Err(e) => {
-            log::error!("Error fetching Binance price: {}", e);
-        }
-    }
+    // match get_binance_price().await {
+    //     std::result::Result::Ok(price) => {
+    //         sources.push(SourcePrice {
+    //             source: "Binance".to_string(),
+    //             price,
+    //         });
+    //         sum += price;
+    //         count += 1;
+    //         println!("Binance price: {}", price);
+    //     }
+    //     Err(e) => {
+    //         log::error!("Error fetching Binance price: {}", e);
+    //     }
+    // }
 
     match get_cryptocompare_price().await {
         std::result::Result::Ok(price) => {
@@ -120,20 +120,20 @@ pub async fn update_price_data(price_data: Arc<Mutex<PriceData>>) {
         }
     }
 
-    match get_quidax_price().await {
-        std::result::Result::Ok(price) => {
-            sources.push(SourcePrice {
-                source: "Luno".to_string(),
-                price,
-            });
-            sum += price;
-            count += 1;
-            println!("Luno price: {}", price);
-        }
-        Err(e) => {
-            log::error!("Error fetching Luno price: {}", e);
-        }
-    }
+    // match get_quidax_price().await {
+    //     std::result::Result::Ok(price) => {
+    //         sources.push(SourcePrice {
+    //             source: "Luno".to_string(),
+    //             price,
+    //         });
+    //         sum += price;
+    //         count += 1;
+    //         println!("Luno price: {}", price);
+    //     }
+    //     Err(e) => {
+    //         log::error!("Error fetching Luno price: {}", e);
+    //     }
+    // }
 
     if count > 0 {
         let average_price = sum / count as f64;
@@ -160,7 +160,7 @@ pub async fn init_price_feed() -> Arc<Mutex<PriceData>> {
 
     let price_data_clone = price_data.clone();
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(120));
+        let mut interval = time::interval(Duration::from_secs(1200));
         loop {
             interval.tick().await;
             update_price_data(price_data_clone.clone()).await;

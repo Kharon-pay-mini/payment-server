@@ -38,7 +38,7 @@ services:
       - .:/app
     restart: on-failure
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/healtz"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5

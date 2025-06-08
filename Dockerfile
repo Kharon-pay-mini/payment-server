@@ -1,4 +1,7 @@
-FROM rust:1.82 as builder
+# === Build stage ===
+FROM rust:1.87-slim AS builder
+
+ENV CARGO_BIN_DIR=/cargo-bin
 
 # Install dependencies including CA certificates
 RUN apt-get update && apt-get install -y \
@@ -16,24 +19,21 @@ RUN cargo install diesel_cli --no-default-features --features postgres --root $C
 
 WORKDIR /app
 
-COPY Cargo.toml ./
-COPY Cargo.lock ./
-
+COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release
 RUN rm -rf src
 
 COPY . .
 
-# Build the application
 RUN cargo build --release
 
-# Final stage
+
+# === Runtime stage ===
 FROM debian:bookworm-slim
 
+# Install runtime dependencies including CA certificates and SSL
 RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
     libpq5 \
     openssl \
     ca-certificates && \
@@ -42,13 +42,12 @@ RUN apt-get update && apt-get install -y \
 
 RUN useradd -m appuser
 
-COPY --from=builder /app/target/release/kharon-server /usr/local/bin/app
+COPY --from=builder /app/target/release/kharon-server-rs /usr/local/bin/app
 COPY --from=builder /cargo-bin/bin/diesel /usr/local/bin/diesel
-# Copy CA certificates from builder (redundant but ensures consistency)
+
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# script to check if .env exists and copy it
-RUN if [ -f .env ]; then cp .env /app/.env; else echo ".env file not found, skipping copy."; fi
+COPY .env /app/.env
 
 USER appuser
 WORKDIR /app

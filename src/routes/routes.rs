@@ -1,4 +1,9 @@
 use crate::{
+    auth::{
+        auth::{log_failed_login, log_successful_login, logout, verify_admin_role},
+        jwt_auth::JwtMiddleware,
+        models::{FlaggedUserQuery, LoginHistoryQuery, UserLoginHistoryItem, UserLoginStats},
+    },
     database::{
         db::AppError, otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
         user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
@@ -20,8 +25,8 @@ use actix_web::{
     cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
-use awc::body;
-use chrono::Utc;
+use awc::{body, cookie::time::OffsetDateTime};
+use chrono::{Duration, Utc};
 use diesel::expression::is_aggregate::No;
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{encode, EncodingKey, Header};
@@ -31,7 +36,7 @@ use redis::AsyncCommands;
 use rust_decimal::Decimal;
 use serde_json::json;
 use sha2::Sha256;
-use std::{time::Duration, usize};
+use std::usize;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -129,7 +134,6 @@ fn filtered_otp(otp: &Otp) -> FilteredOtp {
         expires_at: otp.expires_at,
     }
 }
-
 #[post("/auth/create")]
 async fn create_user_handler(
     body: web::Json<CreateUserSchema>,
@@ -138,19 +142,12 @@ async fn create_user_handler(
     let email = body.email.to_string().to_lowercase();
     let phone: Option<String> = body.phone.as_ref().map(|s| s.to_string());
 
-    let new_user = NewUser {
-        email: email.clone(),
-        phone: phone.clone(),
-        verified: false,
-        role: String::from("user"),
-    };
-
-    // 1. Check if email already exists
+    // Early return pattern - check email first
     match data.db.get_user_by_email(email.clone()) {
-        Ok(_) => {
-            return HttpResponse::BadRequest().json(json!({
-                "status": "error",
-                "data": "Email Already Exists"
+        Ok(existing_user) => {
+            return HttpResponse::Ok().json(json!({
+                "status": "success",
+                "data": filtered_user_record(&existing_user)
             }));
         }
         Err(AppError::DbConnectionError(e)) => {
@@ -161,66 +158,8 @@ async fn create_user_handler(
             }));
         }
         Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
-            // Email not found — proceed to check phone (if provided)
-            if let Some(phone_number) = phone {
-                match data.db.get_user_by_phone(phone_number.clone()) {
-                    Ok(_) => {
-                        return HttpResponse::BadRequest().json(json!({
-                            "status": "error",
-                            "data": "Phone Already Exists"
-                        }));
-                    }
-                    Err(AppError::DbConnectionError(e)) => {
-                        eprintln!("DB connection error: {:?}", e);
-                        return HttpResponse::InternalServerError().json(json!({
-                            "status": "error",
-                            "message": format!("{:?}", e)
-                        }));
-                    }
-                    Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
-                        // Both email and phone are unique, safe to create
-                        match data.db.create_user(new_user.clone()) {
-                            Ok(user) => {
-                                return HttpResponse::Ok().json(json!({
-                                    "status": "success",
-                                    "data": filtered_user_record(&user)
-                                }));
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to create user: {:?}", e);
-                                return HttpResponse::InternalServerError().json(json!({
-                                    "status": "error",
-                                    "message": format!("Failed to create user: {:?}", e)
-                                }));
-                            }
-                        }
-                    }
-                    Err(AppError::DieselError(e)) => {
-                        eprintln!("Query error: {:?}", e);
-                        return HttpResponse::InternalServerError().json(json!({
-                            "status": "error",
-                            "message": format!("{:?}", e)
-                        }));
-                    }
-                }
-            } else {
-                // No phone provided, just create user
-                match data.db.create_user(new_user.clone()) {
-                    Ok(user) => {
-                        return HttpResponse::Ok().json(json!({
-                            "status": "success",
-                            "data": user
-                        }));
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create user: {:?}", e);
-                        return HttpResponse::InternalServerError().json(json!({
-                            "status": "error",
-                            "message": format!("Failed to create user: {:?}", e)
-                        }));
-                    }
-                }
-            }
+            // Continue to phone check
+            eprintln!("Email {} not found for user, checking phone.", email);
         }
         Err(AppError::DieselError(e)) => {
             eprintln!("Query error: {:?}", e);
@@ -230,6 +169,274 @@ async fn create_user_handler(
             }));
         }
     }
+
+    // Check phone if provided
+    if let Some(phone_number) = phone.clone() {
+        match data.db.get_user_by_phone(phone_number) {
+            Ok(existing_user) => {
+                return HttpResponse::Ok().json(json!({
+                    "status": "success",
+                    "data": filtered_user_record(&existing_user)
+                }));
+            }
+            Err(AppError::DbConnectionError(e)) => {
+                eprintln!("DB connection error: {:?}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": format!("{:?}", e)
+                }));
+            }
+            Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+                // Continue to user creation
+                eprintln!("Phone not found for user, creating user...");
+            }
+            Err(AppError::DieselError(e)) => {
+                eprintln!("Query error: {:?}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": format!("{:?}", e)
+                }));
+            }
+        }
+    }
+
+    // Neither email nor phone found - create new user
+    let new_user = NewUser {
+        email: email.clone(),
+        phone: phone.clone(),
+        verified: false,
+        role: String::from("user"),
+    };
+
+    match data.db.create_user(new_user.clone()) {
+        Ok(user) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "data": filtered_user_record(&user)
+        })),
+        Err(e) => {
+            eprintln!("Failed to create user: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Failed to create user: {:?}", e)
+            }))
+        }
+    }
+}
+
+#[get("/admin/users/login-stats")]
+pub async fn get_user_login_stats(
+    body: web::Json<CreateUserSchema>,
+    data: web::Data<AppState>,
+    auth: JwtMiddleware,
+) -> impl Responder {
+    let admin_user_id = auth.user_id;
+    let user_email = body.email.to_string().to_lowercase();
+
+    let target_user_id = match data.db.get_user_by_email(user_email.clone()) {
+        Ok(user) => user.id,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "status": "error",
+                "message": "User not found"
+            }))
+        }
+    };
+
+    if let Err(response) = verify_admin_role(admin_user_id, &data).await {
+        return response;
+    }
+
+    let total_attempts = match data.db.get_user_security_logs_count(target_user_id) {
+        Ok(count) => count,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve login stats"
+            }))
+        }
+    };
+
+    let failed_attempts = match data.db.get_user_total_failed_logins(target_user_id) {
+        Ok(count) => count,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve login stats"
+            }))
+        }
+    };
+
+    let recent_logs = match data
+        .db
+        .get_user_security_logs_with_limit(target_user_id, Some(10))
+    {
+        Ok(logs) => logs,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve recent logs"
+            }))
+        }
+    };
+
+    let successful_logins = total_attempts - failed_attempts;
+    let last_successful_login = recent_logs
+        .iter()
+        .find(|log| log.failed_login_attempts == 0)
+        .and_then(|log| log.created_at);
+
+    let last_failed_login = recent_logs
+        .iter()
+        .find(|log| log.failed_login_attempts > 0)
+        .and_then(|log| log.created_at);
+
+    let is_flagged_for_review = recent_logs.iter().any(|log| log.flagged_for_review);
+
+    let now = Utc::now();
+    let twenty_four_hours_ago = now - Duration::hours(24);
+
+    let recent_failed_attempts = recent_logs
+        .iter()
+        .filter(|log| log.created_at > Some(twenty_four_hours_ago) && log.failed_login_attempts > 0)
+        .map(|log| log.failed_login_attempts)
+        .sum();
+
+    let stats = UserLoginStats {
+        user_id: target_user_id,
+        total_logins: total_attempts,
+        successful_logins,
+        failed_logins: failed_attempts,
+        last_successful_login,
+        last_failed_login,
+        is_flagged_for_review,
+        recent_failed_attempts,
+    };
+
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "data": stats
+    }))
+}
+
+#[get("/admin/users/login-history")]
+pub async fn get_user_login_history(
+    body: web::Json<LoginHistoryQuery>,
+    data: web::Data<AppState>,
+    auth: JwtMiddleware,
+) -> impl Responder {
+    let admin_user_id = auth.user_id;
+    println!("admin id: {}", admin_user_id);
+    let user_email = body.email.to_string().to_lowercase();
+
+    let target_user_id = match data.db.get_user_by_email(user_email.clone()) {
+        Ok(user) => user.id,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "status": "error",
+                "message": "User not found"
+            }))
+        }
+    };
+
+    if let Err(response) = verify_admin_role(admin_user_id, &data).await {
+        return response;
+    }
+
+    let limit = body.limit.unwrap_or(50);
+    let offset = body.offset.unwrap_or(0);
+
+    let logs = match data
+        .db
+        .get_user_security_logs_paginated(target_user_id, limit, offset)
+    {
+        Ok(logs) => logs,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve login history"
+            }))
+        }
+    };
+
+    let history: Vec<UserLoginHistoryItem> = logs
+        .into_iter()
+        .map(|log| UserLoginHistoryItem {
+            id: log.log_id,
+            timestamp: log.created_at.unwrap_or_else(|| chrono::Utc::now()),
+            ip_address: log.ip_address,
+            city: log.city,
+            country: log.country,
+            was_successful: log.failed_login_attempts == 0,
+            failed_login_attempts: log.failed_login_attempts,
+            flagged_for_review: log.flagged_for_review,
+        })
+        .collect();
+
+    let total_count = data
+        .db
+        .get_user_security_logs_count(target_user_id)
+        .unwrap_or(history.len() as i64);
+
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "data": {
+            "history": history,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": (offset + limit) < total_count
+            }
+        }
+    }))
+}
+
+#[get("/admin/flagged-users")]
+pub async fn get_flagged_users(
+    body: web::Json<FlaggedUserQuery>,
+    data: web::Data<AppState>,
+    auth: JwtMiddleware,
+) -> impl Responder {
+    let admin_user_id = auth.user_id;
+    let limit = body.limit.unwrap_or(100);
+    let offset = body.offset.unwrap_or(0);
+
+    if let Err(response) = verify_admin_role(admin_user_id, &data).await {
+        return response;
+    }
+
+    let flagged_users = match data.db.get_flagged_users_security_logs() {
+        Ok(users) => users,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve flagged users"
+            }))
+        }
+    };
+
+    let total_count = match data.db.get_flagged_users_count() {
+        Ok(count) => count,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to retrieve flagged users count"
+            }))
+        }
+    };
+
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "data": {
+            "users": flagged_users,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": (offset + limit) < total_count
+            }
+        }
+    }))
 }
 
 #[post("/users/me/wallet")]
@@ -239,7 +446,6 @@ async fn update_user_wallet_handler(
     auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
-    println!("User ID: {}", user_id);
     let wallet_address = body.wallet_address.to_string();
     let network = body.network.to_string();
 
@@ -362,12 +568,49 @@ async fn request_otp_handler(
     let user_id = body.user_id;
     let email = body.email.clone();
 
-    let otp_code = rng().random_range(100_000..=999_999);
-
-    // let expiry = Utc::now() + Duration::from_secs(15 * 60);
-
     match data.db.get_user_by_id(user_id) {
         Ok(_) => {
+            match data.db.get_otp_by_user_id(user_id) {
+                Ok(existing_otp) => {
+                    let now = Utc::now();
+                    let time_since_creation = now - existing_otp.created_at;
+
+                    if time_since_creation < Duration::minutes(5) {
+                        let remaining_seconds =
+                            (Duration::minutes(5) - time_since_creation).num_seconds();
+                        return HttpResponse::TooManyRequests().json(json!({
+                            "status": "error",
+                            "message": "OTP already sent. Please wait before requesting another.",
+                            "retry_after_seconds": remaining_seconds,
+                            "retry_after_minutes": (remaining_seconds as f64 / 60.0).ceil() as i64
+                        }));
+                    }
+
+                    if let Err(e) = data.db.delete_otp_by_id(existing_otp.otp_id) {
+                        eprintln!("Failed to delete old OTP: {:?}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": "Failed to process OTP request"
+                        }));
+                    }
+                }
+                Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
+                    println!(
+                        "No existing OTP found for user {}, creating new one",
+                        user_id
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Database error checking existing OTP: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to process OTP request"
+                    }));
+                }
+            }
+
+            let otp_code = rng().random_range(100_000..=999_999);
+
             let new_otp = NewOtp {
                 otp_code: otp_code.clone(),
                 user_id: user_id.clone(),
@@ -377,39 +620,41 @@ async fn request_otp_handler(
                 Ok(_) => {
                     if let Err(e) = send_verification_email(&email, otp_code).await {
                         eprint!("Failed to send email: {}", e);
-                        return HttpResponse::InternalServerError()
-                            .json("Failed to send verification email");
-                    } else {
-                        return HttpResponse::Ok()
-                            .json(json!({"message": format!("OTP sent to user: {:?}", email)}));
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": "Failed to send verification email"
+                        }));
                     }
+
+                    HttpResponse::Ok().json(json!({
+                        "status": "success",
+                        "message": format!("OTP sent to {}", email),
+                        "expires_in_minutes": 5
+                    }))
                 }
                 Err(e) => {
-                    eprintln!("Failed to create otp: {:?}", e);
-                    return HttpResponse::InternalServerError().json(json!({
+                    eprintln!("Failed to create OTP: {:?}", e);
+                    HttpResponse::InternalServerError().json(json!({
                         "status": "error",
-                        "message": format!("Failed to create otp: {:?}", e)
-                    }));
+                        "message": "Failed to create OTP"
+                    }))
                 }
             }
         }
-        Err(e) => {
-            match e {
-                AppError::DieselError(diesel::result::Error::NotFound) => {
-                    return HttpResponse::NotFound().json(json!({
-                        "status": "error",
-                        "message": "User not found"
-                    }));
-                }
-                _ => {
-                    eprintln!("Failed to create OTP: {:?}", e);
-                    return HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": format!("Failed to create OTP: {:?}", e)
-                    }));
-                }
-            };
-        }
+        Err(e) => match e {
+            AppError::DieselError(diesel::result::Error::NotFound) => HttpResponse::NotFound()
+                .json(json!({
+                    "status": "error",
+                    "message": "User not found"
+                })),
+            _ => {
+                eprintln!("Failed to verify user: {:?}", e);
+                HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to process request"
+                }))
+            }
+        },
     }
 }
 
@@ -417,6 +662,7 @@ async fn request_otp_handler(
 async fn validate_otp_handler(
     body: web::Json<ValidateOtpSchema>,
     data: web::Data<AppState>,
+    req: HttpRequest,
 ) -> impl Responder {
     let user_id = body.user_id;
     let otp = body.otp;
@@ -433,6 +679,7 @@ async fn validate_otp_handler(
             }
 
             if otp_record.otp_code != otp {
+                log_failed_login(&data, &req, user_id, Some("Invalid otp".to_string())).await;
                 return HttpResponse::Unauthorized().json("Invalid otp");
             }
 
@@ -443,7 +690,7 @@ async fn validate_otp_handler(
 
             let now = Utc::now();
             let iat = now.timestamp() as usize;
-            let exp = (now + Duration::from_secs(24 * 60 * 60)).timestamp() as usize;
+            let exp = (now + Duration::seconds(24 * 60 * 60)).timestamp() as usize;
             let claims: TokenClaims = TokenClaims {
                 sub: user_id.to_string(),
                 iat,
@@ -463,9 +710,11 @@ async fn validate_otp_handler(
                 .http_only(true)
                 .finish();
 
+            log_successful_login(&data, &req, user_id).await;
+
             HttpResponse::Ok()
                 .cookie(cookie)
-                .json(json!({"status": "success", "token": token}))
+                .json(json!({"status": "success", "message": "Sign in successful"}))
         }
         Err(e) => {
             match e {
@@ -1199,7 +1448,7 @@ async fn get_stats_handler(
 }
  */
 
-#[get("/healtz")]
+#[get("/healthz")]
 async fn check_health(_data: web::Data<AppState>) -> impl Responder {
     let json_response = serde_json::json!({
         "status": "success",
@@ -1209,4 +1458,29 @@ async fn check_health(_data: web::Data<AppState>) -> impl Responder {
     });
 
     HttpResponse::Ok().json(json_response)
+}
+
+#[post("/users/logout")]
+async fn logout_handler(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    auth: JwtMiddleware
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    logout(&data, &req, user_id).await;
+
+    let cookie = Cookie::build("token", "")
+        .path("/")
+        .max_age(ActixWebDuration::new(0, 0))
+        .http_only(true)
+        .expires(OffsetDateTime::now_utc())
+        .finish();
+
+    HttpResponse::Ok()
+        .cookie(cookie)
+        .json(json!({
+            "status": "success",
+            "message": "Logged out successfully"
+        }))
 }

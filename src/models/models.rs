@@ -113,6 +113,7 @@ pub struct NewUserSecurityLog {
     pub country: String,
     pub failed_login_attempts: i32,
     pub flagged_for_review: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Queryable, AsChangeset, Insertable)]

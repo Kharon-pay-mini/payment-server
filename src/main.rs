@@ -26,7 +26,6 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use pricefeed::pricefeed::PriceData;
-use serde::Serialize;
 use service::geolocation::geolocator::GeoLocator;
 
 pub struct AppState {

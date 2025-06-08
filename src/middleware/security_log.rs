@@ -7,13 +7,14 @@ use actix_web::{
     middleware::Next,
     web, Error,
 };
+use chrono::Utc;
 
 pub async fn security_logger_middleware(
     req: ServiceRequest,
     next: Next<impl actix_web::body::MessageBody>,
 ) -> Result<ServiceResponse<impl actix_web::body::MessageBody>, Error> {
     let app_data = req.app_data::<actix_web::web::Data<AppState>>().cloned();
-    let user_id = extract_user_id(&req, app_data.as_ref());
+    let user_id = extract_user_id_from_jwt(&req, app_data.as_ref());
     let ip_address = req
         .connection_info()
         .realip_remote_addr()
@@ -65,9 +66,10 @@ pub async fn security_logger_middleware(
                             country: country.clone(),
                             failed_login_attempts: failed_login_attempts as i32,
                             flagged_for_review: flagged_for_review.clone(),
+                            created_at: Utc::now()
                         };
 
-                        db.create_user_secutiry_log(new_log);
+                        db.create_user_security_log(new_log);
                     }
                 }
             }
@@ -77,7 +79,7 @@ pub async fn security_logger_middleware(
     Ok(response)
 }
 
-fn extract_user_id(
+fn extract_user_id_from_jwt(
     req: &ServiceRequest,
     app_state: Option<&web::Data<AppState>>,
 ) -> Option<uuid::Uuid> {
