@@ -279,3 +279,17 @@ pub struct FlutterwaveWebhookData {
     #[serde(rename = "tx_ref")]
     pub tx_ref: Option<String>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TransactionDetails {
+    pub reference: String,
+    pub transaction_ref: Option<String>,
+    pub crypto_amount: String,
+    pub crypto_symbol: String,
+    pub fiat_amount: String,
+    pub bank_name: String,
+    pub account_number: String,
+    pub account_name: String,
+    pub transaction_hash: String,
+    pub transaction_date: String,
+}

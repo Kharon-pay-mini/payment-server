@@ -36,15 +36,13 @@ pub trait TransactionImpl: DbAccess {
         &self,
         user_id_val: uuid::Uuid,
         status: String,
-        transaction_ref: String,
     ) -> Result<usize, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         let updated_rows = diesel::update(transactions.filter(user_id.eq(user_id_val)))
             .set((
                 payment_status.eq(status),
-                updated_at.eq(Utc::now().naive_utc()),
-                transaction_reference.eq(transaction_ref.clone()),
+                updated_at.eq(Utc::now().naive_utc())
             ))
             .execute(&mut conn)
             .map_err(AppError::DieselError)?;

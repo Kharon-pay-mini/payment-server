@@ -8,24 +8,37 @@ use crate::{
         db::AppError, otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
         user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
     },
+    helpers::{
+        auth_helpers::{extract_auth_headers, verify_api_key, verify_hmac_signature},
+        payment_helpers::{
+            calculate_fiat_amount, create_transaction_details, create_transaction_record,
+        },
+        validation_helpers::{
+            validate_amount_match, validate_reference, validate_user_id, verify_timestamp,
+        },
+    },
     integrations::{
         flutterwave::{
             disburse_payment_using_flutterwave, fetch_banks_via_flutterwave,
             process_flutterwave_webhook, verify_account_via_flutterwave,
         },
-        model::FlutterwaveWebhookPayload,
+        model::{FlutterwaveWebhookPayload, TransactionDetails},
     },
     models::models::{
         CreateUserSchema, NewOtp, NewTransaction, NewUser, NewUserSecurityLog, NewUserWallet, Otp,
         OtpSchema, TokenClaims, Transaction, TransactionSchema, User, UserSecurityLog,
         UserSecurityLogsSchema, UserWallet, UserWalletSchema, ValidateOtpSchema,
     },
+    service::email_service::send_confirmation_email,
 };
 use actix_web::{
     cookie::{time::Duration as ActixWebDuration, Cookie},
     get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
-use awc::{body, cookie::time::OffsetDateTime};
+use awc::{
+    body,
+    cookie::{time::OffsetDateTime, SameSite},
+};
 use chrono::{Duration, Utc};
 use diesel::expression::is_aggregate::No;
 use hmac::{Hmac, Mac};
@@ -134,6 +147,7 @@ fn filtered_otp(otp: &Otp) -> FilteredOtp {
         expires_at: otp.expires_at,
     }
 }
+
 #[post("/auth/create")]
 async fn create_user_handler(
     body: web::Json<CreateUserSchema>,
@@ -705,9 +719,12 @@ async fn validate_otp_handler(
             .unwrap();
 
             let cookie = Cookie::build("token", token.to_owned())
+                .domain("localhost")
                 .path("/")
+                .secure(false)
                 .max_age(ActixWebDuration::new(24 * 60 * 60, 0)) //24h
                 .http_only(true)
+                .same_site(SameSite::None)
                 .finish();
 
             log_successful_login(&data, &req, user_id).await;
@@ -968,7 +985,7 @@ pub async fn init_disburse_payment_handler(
 
     let bank_code = banks
         .iter()
-        .find(|bank| bank.name.to_lowercase() == request.bank_name.to_lowercase())
+        .find(|bank| bank.name == request.bank_name)
         .map(|bank| bank.code.clone());
 
     let bank_code = match bank_code {
@@ -1003,7 +1020,6 @@ pub async fn init_disburse_payment_handler(
                 signature: signature.clone(),
             };
 
-            //TODO: PERIST DATA ON REDIS TILL PAYMENT IS CONFIRMED
             if let Err(e) =
                 store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement)
                     .await
@@ -1017,6 +1033,28 @@ pub async fn init_disburse_payment_handler(
                 });
             }
 
+            let usdt_ngn_rate: i64 =
+                match pricefeed::pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone())
+                {
+                    Ok(rate) => {
+                        log::info!("Current USDT to NGN rate: {}", rate);
+                        rate as i64
+                    }
+                    Err(e) => {
+                        log::error!("Failed to fetch USDT to NGN rate: {}", e);
+                        return HttpResponse::InternalServerError().json(PaymentResult {
+                            success: false,
+                            reference: reference.clone(),
+                            transaction_ref: None,
+                            status: None,
+                            message: "Failed to fetch USDT to NGN rate".to_string(),
+                            error: Some(e.to_string()),
+                        });
+                    }
+                };
+
+            let fiat_amount: i64 = calculate_fiat_amount(crypto_amount as i64, usdt_ngn_rate);
+
             HttpResponse::Ok().json(InitDisbursementResponse {
                 success: true,
                 message: "Payment initialized, please confirm to proceed".to_string(),
@@ -1026,7 +1064,7 @@ pub async fn init_disburse_payment_handler(
                     account_number: request.account_number.clone(),
                     bank_name: request.bank_name.clone(),
                     bank_code: bank_code.clone(),
-                    amount: 0.0,
+                    amount: fiat_amount as f64,
                     currency: request.currency.clone(),
                     crypto_tx_hash: "".to_string(),
                 }),
@@ -1051,96 +1089,55 @@ pub async fn confirm_disburse_payment_handler(
     req: HttpRequest,
     body: web::Bytes,
 ) -> impl Responder {
-    // Verify HMAC signature from headers
-    let api_key = req
-        .headers()
-        .get("X-Api-Key")
-        .and_then(|value| value.to_str().ok());
-    let timestamp = req
-        .headers()
-        .get("X-Timestamp")
-        .and_then(|value| value.to_str().ok());
-    let signature = req
-        .headers()
-        .get("X-Signature")
-        .and_then(|value| value.to_str().ok());
+    let auth_headers = match extract_auth_headers(&req) {
+        Ok(headers) => headers,
+        Err(error) => {
+            return HttpResponse::BadRequest().json(PaymentResult {
+                success: false,
+                reference: "unknown".to_string(),
+                transaction_ref: None,
+                status: None,
+                message: "Missing authentication headers".to_string(),
+                error: Some(error),
+            });
+        }
+    };
 
-    if api_key.is_none() || timestamp.is_none() || signature.is_none() {
-        return HttpResponse::BadRequest().json(PaymentResult {
-            success: false,
-            reference: "unknown".to_string(),
-            transaction_ref: None,
-            status: None,
-            message: "Missing authentication headers".to_string(),
-            error: Some("Missing X-Api-Key, X-Timestamp, or X-Signature header".to_string()),
-        });
-    }
-
-    let api_key = api_key.unwrap();
-    let timestamp = timestamp.unwrap();
-    let signature = signature.unwrap();
-
-    // verify api_key
-    if api_key != app_state.env.hmac_key {
+    if let Err(error) = verify_api_key(&auth_headers.api_key, &app_state.env.hmac_key) {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: "unknown".to_string(),
             transaction_ref: None,
             status: None,
             message: "Invalid API key".to_string(),
-            error: Some("Unauthorized".to_string()),
+            error: Some(error),
         });
     }
 
-    // verify timestamp
-    let current_timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let request_timestamp: u64 = match timestamp.parse() {
-        Ok(ts) => ts,
-        Err(_) => {
-            return HttpResponse::BadRequest().json(PaymentResult {
-                success: false,
-                reference: "unknown".to_string(),
-                transaction_ref: None,
-                status: None,
-                message: "Invalid timestamp".to_string(),
-                error: Some("Invalid timestamp format".to_string()),
-            });
-        }
-    };
-
-    if current_timestamp.abs_diff(request_timestamp) > 300 {
+    if let Err(error) = verify_timestamp(&auth_headers.timestamp) {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: "unknown".to_string(),
             transaction_ref: None,
             status: None,
             message: "Request timestamp expired".to_string(),
-            error: Some("Timestamp outside acceptable window".to_string()),
+            error: Some(error),
         });
     }
 
-    // verify signature
-    let payload = String::from_utf8_lossy(&body);
-    let message = format!("{}{}", timestamp, payload);
-
-    let hmac_secret = &app_state.env.hmac_secret;
-    let mut mac = HmacSha256::new_from_slice(hmac_secret.as_bytes())
-        .expect("msg: HMAC can take key of any size");
-    mac.update(message.as_bytes());
-    let calculated_signature = hex::encode(mac.finalize().into_bytes());
-
-    if calculated_signature != signature {
+    if let Err(error) = verify_hmac_signature(
+        &auth_headers.timestamp,
+        &body,
+        &auth_headers.signature,
+        &app_state.env.hmac_secret,
+    ) {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: "unknown".to_string(),
             transaction_ref: None,
             status: None,
             message: "Invalid signature".to_string(),
-            error: Some("HMAC signature verification failed".to_string()),
+            error: Some(error),
         });
     }
 
@@ -1158,50 +1155,28 @@ pub async fn confirm_disburse_payment_handler(
         }
     };
 
-    let user_id = request.user_id.clone();
-
-    // convert user_id to Uuid
-    let user_id = match Uuid::parse_str(&user_id) {
+    let user_id = match validate_user_id(&request.user_id) {
         Ok(id) => id,
-        Err(_) => {
+        Err(error) => {
             return HttpResponse::BadRequest().json(PaymentResult {
                 success: false,
                 reference: request.reference.clone(),
                 transaction_ref: None,
                 status: None,
                 message: "Invalid user ID".to_string(),
-                error: Some("Invalid user ID".to_string()),
+                error: Some(error),
             });
         }
     };
 
-    log::info!(
-        "Confirming disbursement for user {}, reference: {}",
-        user_id,
-        request.reference
-    );
-
-    // ASSERT reference length
-    if request.reference.len() > 56 {
+    if let Err(error) = validate_reference(&request.reference) {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: request.reference.clone(),
             transaction_ref: None,
             status: None,
             message: "Invalid reference".to_string(),
-            error: Some("Invalid reference".to_string()),
-        });
-    }
-
-    // ASSERT user_id length
-    if user_id.to_string().len() > 40 {
-        return HttpResponse::BadRequest().json(PaymentResult {
-            success: false,
-            reference: request.reference.clone(),
-            transaction_ref: None,
-            status: None,
-            message: "Invalid user ID".to_string(),
-            error: Some("Invalid user ID".to_string()),
+            error: Some(error),
         });
     }
 
@@ -1216,6 +1191,26 @@ pub async fn confirm_disburse_payment_handler(
                     status: None,
                     message: "Failed to retrieve pending disbursement".to_string(),
                     error: Some(e),
+                });
+            }
+        };
+
+    let crypto_amount =
+        match validate_amount_match(&request.amount, pending_disbursement.crypto_amount as i64) {
+            Ok(amount) => amount,
+            Err(error) => {
+                log::error!(
+                    "Crypto amount not equal to initialized amount. pending: {} - final: {}",
+                    pending_disbursement.crypto_amount,
+                    request.amount
+                );
+                return HttpResponse::BadRequest().json(PaymentResult {
+                    success: false,
+                    reference: request.reference.clone(),
+                    transaction_ref: None,
+                    status: None,
+                    message: "Crypto amount not equal to initialized amount".to_string(),
+                    error: Some(error),
                 });
             }
         };
@@ -1240,20 +1235,15 @@ pub async fn confirm_disburse_payment_handler(
         };
 
     let narration = Some("Services");
-    let amount: i64 = request.amount.parse().expect("failed to parse amount");
+
     //convert amount to Naira
-    let fiat_amount = amount * usdt_ngn_rate;
+    let fiat_amount = calculate_fiat_amount(crypto_amount, usdt_ngn_rate);
 
     log::info!(
         "Converting {} USDT to NGN at rate {}: {} NGN",
-        amount,
+        crypto_amount,
         usdt_ngn_rate,
         fiat_amount
-    );
-
-    println!(
-        "Converting {} USDT to NGN at rate {}: {} NGN",
-        amount, usdt_ngn_rate, fiat_amount
     );
 
     match disburse_payment_using_flutterwave(
@@ -1270,32 +1260,22 @@ pub async fn confirm_disburse_payment_handler(
     {
         Ok(disbursement) => {
             let payment_status = disbursement.status.clone();
-            let monnify_reference = disbursement.reference.clone();
-            let crypto_amount = Decimal::from_f64(pending_disbursement.crypto_amount)
-                .expect("Invalid float -> Decimal conversion");
-            let fiat_amount =
-                Decimal::from_i64(fiat_amount).expect("Invalid float -> Decimal conversion");
+            let reference = disbursement.reference.clone();
 
-            let new_tx = NewTransaction {
-                user_id: user_id.clone(),
-                order_type: pending_disbursement.order_type.clone(),
-                crypto_amount: crypto_amount,
-                crypto_type: pending_disbursement.crypto_symbol.clone(),
-                fiat_amount: fiat_amount,
-                fiat_currency: pending_disbursement.currency,
-                payment_method: pending_disbursement.payment_method.clone(),
-                payment_status: payment_status.clone(),
-                tx_hash: request.transaction_hash.clone(),
-                reference: monnify_reference.clone(),
-                settlement_status: None,
-                transaction_reference: None,
-                settlement_date: None,
-            };
+            let new_tx = create_transaction_record(
+                user_id,
+                &pending_disbursement,
+                crypto_amount,
+                fiat_amount,
+                payment_status.clone(),
+                reference.clone(),
+                request.transaction_hash.clone(),
+            );
 
             let transaction_result = app_state.db.create_transaction(new_tx);
 
             match &transaction_result {
-                Ok(tx) => log::info!("Transaction saved successfully: {:?}", tx),
+                Ok(_tx) => log::info!("Transaction saved successfully"),
                 Err(e) => log::error!("Failed to save transaction to DB: {:?}", e),
             }
 
@@ -1312,14 +1292,18 @@ pub async fn confirm_disburse_payment_handler(
 
             let key = format!("pending disbursement:{}:{}", request.reference, user_id);
             let _: Result<(), _> = redis_conn.expire(&key, 86400).await;
-            // let _: Result<(), _> = redis_conn.del(&key).await;
 
-            //      TODO: SEND CONFIRMATION EMAIL TO USER WITH NECESSARY DETAILS
+            let tx_hash = &request.transaction_hash;
+            let tx_hash_key = format!("tx_hash:{}:{}", request.reference, user_id);
+            println!("Request reference: {}", &request.reference);
+            let _: Result<(), _> = redis_conn.set_ex(&tx_hash_key, tx_hash, 3600).await;
+
+            log::info!("Payment initiated successfully for user: {}", user_id);
 
             HttpResponse::Ok().json(PaymentResult {
                 success: true,
                 reference: request.reference.clone(),
-                transaction_ref: Some(monnify_reference),
+                transaction_ref: Some(reference),
                 status: Some(disbursement.status),
                 message: "Payment initiated".to_string(),
                 error: None,
@@ -1464,7 +1448,7 @@ async fn check_health(_data: web::Data<AppState>) -> impl Responder {
 async fn logout_handler(
     data: web::Data<AppState>,
     req: HttpRequest,
-    auth: JwtMiddleware
+    auth: JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
 
@@ -1477,10 +1461,10 @@ async fn logout_handler(
         .expires(OffsetDateTime::now_utc())
         .finish();
 
-    HttpResponse::Ok()
-        .cookie(cookie)
-        .json(json!({
-            "status": "success",
-            "message": "Logged out successfully"
-        }))
+    HttpResponse::Ok().cookie(cookie).json(json!({
+        "status": "success",
+        "message": "Logged out successfully"
+    }))
 }
+
+// TODO: HANDLE FAILED AND REVERSED TRANSACTIONS

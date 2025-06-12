@@ -1,4 +1,5 @@
 use actix_web::web;
+use chrono::Utc;
 use num_traits::FromPrimitive;
 use redis::AsyncCommands;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -7,9 +8,17 @@ use sha2::{Digest, Sha512};
 use uuid::Uuid;
 
 use crate::{
-    database::transaction_db::TransactionImpl,
-    integrations::model::{FlutterwaveTransferResponse, PendingDisbursement},
+    database::{db::AppError, transaction_db::TransactionImpl, user_db::UserImpl},
+    helpers::{
+        models::{RetryableTransfer, TransferDetails},
+        payment_helpers::{
+            calculate_fiat_amount, create_transaction_details, notify_admin_of_failed_transfer,
+        },
+    },
+    integrations::model::{FlutterwaveTransferResponse, PendingDisbursement, TransactionDetails},
     models::models::NewTransaction,
+    pricefeed::pricefeed,
+    service::email_service::send_confirmation_email,
     AppState,
 };
 
@@ -59,8 +68,6 @@ pub async fn disburse_payment_using_flutterwave(
                 .text()
                 .await
                 .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-            log::info!("Flutterwave transfer response: {}", raw_body);
 
             match serde_json::from_str::<FlutterwaveTransferResponse>(&raw_body) {
                 Ok(transfer_response) => {
@@ -172,15 +179,22 @@ pub async fn process_flutterwave_webhook(
         payload.data.status
     );
 
-    match payload.event.as_str() {
-        "transfer.completed" => handle_successful_transfer(app_state, &payload.data).await,
-        "transfer.failed" => handle_failed_transfer(app_state, &payload.data).await,
-        "transfer.pending" | "transfer.processing" => {
+    match payload.data.status.as_str() {
+        "SUCCESSFUL" => {
+            log::info!("🟢 Routing to handle_successful_transfer");
+            handle_successful_transfer(app_state, &payload.data).await
+        }
+        "FAILED" => {
+            log::info!("🔴 Routing to handle_failed_transfer");
+            handle_failed_transfer(app_state, &payload.data).await
+        }
+        "PENDING" | "PROCESSING" => {
+            log::info!("🟡 Routing to handle_pending_transfer");
             handle_pending_transfer(app_state, &payload.data).await
         }
-        "transfer.reversed" => handle_reversed_transfer(app_state, &payload.data).await,
+        "REVERSED" => handle_reversed_transfer(app_state, &payload.data).await,
         _ => {
-            log::info!("Unhandled Flutterwave event type: {}", payload.event);
+            log::warn!("Unhandled Flutterwave event type: {}", payload.event);
             Ok(())
         }
     }
@@ -206,7 +220,7 @@ async fn handle_successful_transfer(
 
     {
         let mut iter = redis_conn
-            .scan_match::<_, String>(format!("pending disbursement: {}:*", data.reference))
+            .scan_match::<_, String>(format!("pending disbursement:{}:*", data.reference))
             .await
             .map_err(|e| format!("Failed to scan Redis: {}", e))?;
 
@@ -235,31 +249,122 @@ async fn handle_successful_transfer(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state.db.update_transaction(
-                    user_id,
-                    "COMPLETED".to_string(),
-                    data.id.to_string(),
-                );
+                let tx_hash_key = format!("tx_hash:{}:{}", data.reference, user_id);
+                let stored_hash: Option<String> = redis_conn.get(&tx_hash_key).await.ok();
 
-                if rows_affected.unwrap() == 0 {
-                    let new_tx = NewTransaction {
-                        user_id: user_id.clone(),
-                        order_type: disbursement.order_type.clone(),
-                        crypto_amount: Decimal::from_f64(disbursement.crypto_amount)
-                            .expect("Invalid float -> Decimal conversion"),
-                        crypto_type: disbursement.crypto_symbol.clone(),
-                        fiat_amount: Decimal::from_f64(00.00)
-                            .expect("Invalid float -> Decimal conversion"),
-                        fiat_currency: disbursement.currency.clone(),
-                        payment_method: disbursement.payment_method.clone(),
-                        payment_status: "COMPLETED".into(),
-                        reference: data.reference.clone(),
-                        transaction_reference: Some(data.id.to_string()),
-                        settlement_status: None,
-                        settlement_date: None,
-                        tx_hash: "0x00".to_string(),
-                    };
-                    app_state.db.create_transaction(new_tx);
+                // Try to update existing transaction first
+                match app_state
+                    .db
+                    .update_transaction(user_id, "COMPLETED".to_string())
+                {
+                    Ok(rows_affected) => {
+                        if rows_affected == 0 {
+                            let new_tx = NewTransaction {
+                                user_id: user_id.clone(),
+                                order_type: disbursement.order_type.clone(),
+                                crypto_amount: Decimal::from_f64(disbursement.crypto_amount)
+                                    .expect("Invalid float -> Decimal conversion"),
+                                crypto_type: disbursement.crypto_symbol.clone(),
+                                fiat_amount: Decimal::from_f64(00.00)
+                                    .expect("Invalid float -> Decimal conversion"),
+                                fiat_currency: disbursement.currency.clone(),
+                                payment_method: disbursement.payment_method.clone(),
+                                payment_status: "COMPLETED".into(),
+                                reference: data.reference.clone(),
+                                transaction_reference: Some(data.id.to_string()),
+                                settlement_status: None,
+                                settlement_date: None,
+                                tx_hash: stored_hash.clone().unwrap_or("0x00".to_string()),
+                            };
+
+                            match app_state.db.create_transaction(new_tx) {
+                                Ok(_) => {
+                                    log::info!(
+                                        "Successfully created new transaction for reference: {}",
+                                        data.id
+                                    );
+                                }
+                                Err(e) => {
+                                    // Check if it's a unique violation error
+                                    if let AppError::DieselError(
+                                        diesel::result::Error::DatabaseError(
+                                            diesel::result::DatabaseErrorKind::UniqueViolation,
+                                            _,
+                                        ),
+                                    ) = e
+                                    {
+                                        log::warn!("Transaction with reference {} already exists (race condition), skipping creation", data.id);
+                                    } else {
+                                        log::error!("Failed to create transaction: {:?}", e);
+                                        return Err(format!(
+                                            "Failed to create transaction: {:?}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            }
+                        } else {
+                            log::info!(
+                                "Successfully updated existing transaction for user: {}",
+                                user_id
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        // Handle unique violation in update as well
+                        if let AppError::DieselError(diesel::result::Error::DatabaseError(
+                            diesel::result::DatabaseErrorKind::UniqueViolation,
+                            _,
+                        )) = e
+                        {
+                            log::warn!("Transaction with reference {} already exists during update (race condition), continuing with email", data.id);
+                        } else {
+                            log::error!("Failed to update transaction: {:?}", e);
+                            return Err(format!("Failed to update transaction: {:?}", e));
+                        }
+                    }
+                }
+
+                // Send confirmation email
+                match app_state.db.get_user_by_id(user_id) {
+                    Ok(user) => {
+                        let usdt_ngn_rate = match pricefeed::get_current_usdt_ngn_rate(
+                            app_state.price_feed.clone(),
+                        ) {
+                            Ok(rate) => rate as i64,
+                            Err(e) => {
+                                log::error!("Failed to fetch USDT to NGN rate for email: {}", e);
+                                0000
+                            }
+                        };
+
+                        let crypto_amount = disbursement.crypto_amount as i64;
+                        let fiat_amount = calculate_fiat_amount(crypto_amount, usdt_ngn_rate);
+
+                        let transaction_details = create_transaction_details(
+                            data.reference.clone(),
+                            data.id.to_string(),
+                            crypto_amount,
+                            disbursement.crypto_symbol.clone(),
+                            fiat_amount,
+                            &disbursement,
+                            stored_hash.unwrap_or("0x00".to_string()),
+                        );
+
+                        if let Err(e) =
+                            send_confirmation_email(&user.email, transaction_details).await
+                        {
+                            log::error!("Failed to send confirmation email: {}", e);
+                        } else {
+                            log::info!(
+                                "Confirmation email sent successfully to user: {}",
+                                user.email
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get user for email notification: {:?}", e);
+                    }
                 }
 
                 redis_conn
@@ -271,14 +376,30 @@ async fn handle_successful_transfer(
             }
         }
     } else {
-        let new_rows_affected = app_state.db.update_transaction_by_tx_ref(
+        log::warn!(
+            "No pending disbursement found for reference: {}",
+            data.reference
+        );
+
+        match app_state.db.update_transaction_by_tx_ref(
             data.id.to_string(),
             "COMPLETED".to_string(),
             data.reference.clone(),
-        );
-
-        if new_rows_affected.unwrap() == 0 {
-            log::warn!("No transaction found for reference: {}", data.id);
+        ) {
+            Ok(rows_affected) => {
+                if rows_affected == 0 {
+                    log::warn!("No transaction found for reference: {}", data.id);
+                } else {
+                    log::info!("Successfully updated transaction by reference: {}", data.id);
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to update transaction by reference: {:?}", e);
+                return Err(format!(
+                    "Failed to update transaction by reference: {:?}",
+                    e
+                ));
+            }
         }
     }
 
@@ -310,7 +431,7 @@ async fn handle_reversed_transfer(
 
     {
         let mut iter = redis_conn
-            .scan_match::<_, String>(format!("pending disbursement: {}:*", data.reference))
+            .scan_match::<_, String>(format!("pending disbursement:{}:*", data.reference))
             .await
             .map_err(|e| format!("Failed to scan Redis keys: {}", e))?;
 
@@ -339,11 +460,9 @@ async fn handle_reversed_transfer(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state.db.update_transaction(
-                    user_id,
-                    "REVERSED".to_string(),
-                    data.id.to_string(),
-                );
+                let rows_affected = app_state
+                    .db
+                    .update_transaction(user_id, "REVERSED".to_string());
 
                 // ALERT ADMIN
                 // RETRY DISBURSEMENT
@@ -359,7 +478,7 @@ async fn handle_reversed_transfer(
             data.reference
         );
 
-        app_state
+        let _ = app_state
             .db
             .update_transaction_status_by_tx_ref(data.id.to_string(), "REVERSED".to_string());
     }
@@ -377,78 +496,101 @@ async fn handle_failed_transfer(
         data.id
     );
 
-    println!(
-        "Processing failed transfer: reference={}, id={}",
-        data.reference, data.id
-    );
-
     let mut redis_conn = app_state
         .redis_pool
         .get()
         .await
         .map_err(|e| format!("Failed to get Redis connection: {}", e))?;
 
-    let mut keys = Vec::new();
+    // Find pending disbursement
+    let pending_key = format!("pending disbursement:{}:*", data.reference);
+    let keys: Vec<String> = redis_conn
+        .keys(&pending_key)
+        .await
+        .map_err(|e| format!("Failed to scan Redis keys: {}", e))?;
 
-    {
-        let mut iter = redis_conn
-            .scan_match::<_, String>(format!("pending disbursement: {}:*", data.reference))
-            .await
-            .map_err(|e| format!("Failed to scan Redis keys: {}", e))?;
-
-        while let Some(key) = iter.next_item().await {
-            keys.push(key);
-        }
-    }
-
-    if !keys.is_empty() {
-        for key in keys {
-            let parts: Vec<&str> = key.split(':').collect();
-            if parts.len() != 3 {
-                continue;
-            }
-
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-
-            let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
-                format!("Failed to retrieve pending disbursement from Redis: {}", e)
-            })?;
-
-            if let Some(data_str) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
-                    .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
-
-                let rows_affected = app_state.db.update_transaction(
-                    user_id,
-                    "FAILED".to_string(),
-                    data.id.to_string(),
-                );
-
-                // ALERT ADMIN
-                //RETRY DISBURSEMENT
-                log::info!(
-                    "Successfully marked disbursement as failed for user: {}",
-                    user_id
-                );
-
-                println!(
-                    "Successfully marked disbursement as failed for user: {}",
-                    user_id
-                );
-            }
-        }
-    } else {
+    if keys.is_empty() {
         log::warn!(
             "No pending disbursement found for reference: {}",
             data.reference
         );
-
-        app_state
+        // Update transaction status to FAILED
+        let _ = app_state
             .db
-            .update_transaction_status_by_tx_ref(data.id.to_string(), "REVERSED".to_string());
+            .update_transaction_status_by_tx_ref(data.id.to_string(), "FAILED".to_string());
+
+        return Ok(());
+    }
+
+    for key in keys {
+        let parts: Vec<&str> = key.split(':').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+
+        let user_id = match Uuid::parse_str(parts[2]) {
+            Ok(id) => id,
+            Err(e) => {
+                log::warn!("Failed to parse user_id from key {}: {}", key, e);
+                continue;
+            }
+        };
+
+        let pending_data: Option<String> = redis_conn
+            .get(&key)
+            .await
+            .map_err(|e| format!("Failed to get pending disbursement: {}", e))?;
+
+        if let Some(data_str) = pending_data {
+            let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
+                .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
+
+            // Get exchange rate
+            let usdt_ngn_rate =
+                match pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone()) {
+                    Ok(rate) => rate as i64,
+                    Err(e) => {
+                        log::error!("Failed to fetch USDT to NGN rate: {}", e);
+                        return Err("Failed to fetch exchange rate".to_string());
+                    }
+                };
+
+            let tx_hash_key = format!("tx_hash:{}:{}", data.reference, user_id);
+            let stored_hash: Option<String> = redis_conn.get(&tx_hash_key).await.ok();
+
+            let crypto_amount = disbursement.crypto_amount as i64;
+            let fiat_amount = calculate_fiat_amount(crypto_amount, usdt_ngn_rate);
+
+            let transfer_details = create_transaction_details(
+                data.reference.clone(),
+                data.id.to_string(),
+                crypto_amount,
+                disbursement.crypto_symbol.clone(),
+                fiat_amount,
+                &disbursement,
+                stored_hash.unwrap_or("0x00".to_string())
+            );
+
+            // Notify admin
+            if let Err(e) = notify_admin_of_failed_transfer(&transfer_details).await {
+                log::error!(
+                    "Failed to notify admin about failed transfer {}: {}",
+                    data.reference,
+                    e
+                );
+            }
+
+            // Clean up the pending disbursement from Redis
+            if let Err(e) = redis_conn.del::<String, ()>(key.clone()).await {
+                log::error!("Failed to delete pending disbursement key {}: {}", key, e);
+            }
+
+            log::info!(
+                "Successfully processed failed transfer: reference={}, user_id={}, status=FAILED",
+                data.reference,
+                user_id
+            );
+        }
     }
 
     Ok(())
@@ -459,7 +601,7 @@ async fn handle_pending_transfer(
     data: &FlutterwaveWebhookData,
 ) -> Result<(), String> {
     log::info!(
-        "Processing pending transfer: reference={}, id={}",
+        "PENDING WEBHOOK RECEIVED: reference={}, id={}",
         data.reference,
         data.id
     );
@@ -474,7 +616,7 @@ async fn handle_pending_transfer(
 
     {
         let mut iter = redis_conn
-            .scan_match::<_, String>(format!("pending disbursement: {}:*", data.reference))
+            .scan_match::<_, String>(format!("pending disbursement:{}:*", data.reference))
             .await
             .map_err(|e| format!("Failed to scan Redis: {}", e))?;
 
@@ -506,11 +648,9 @@ async fn handle_pending_transfer(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                app_state.db.update_transaction(
-                    user_id,
-                    "PENDING".to_string(),
-                    data.id.to_string(),
-                );
+                let _ = app_state
+                    .db
+                    .update_transaction(user_id, "PENDING".to_string());
                 log::info!("Updated transaction to PENDING for user: {}", user_id);
             }
         }
@@ -520,10 +660,20 @@ async fn handle_pending_transfer(
             data.reference
         );
 
-        app_state
+        let _ = app_state
             .db
             .update_transaction_status_by_tx_ref(data.id.to_string(), "PENDING".to_string());
     }
 
     Ok(())
 }
+
+/*
+SIDE NOTES FOR LATER IMPLEMENTATIONS
+Additional Recommendations:
+
+Circuit Breaker: Stop retries if Flutterwave is experiencing widespread issues
+Monitoring: Track retry success rates and adjust intervals
+Dead Letter Queue: Store permanently failed transfers for manual review
+Rate Limiting: Don't overwhelm Flutterwave API with retries
+*/

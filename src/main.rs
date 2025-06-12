@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod database;
+mod helpers;
 mod integrations;
 mod middleware;
 mod models;
@@ -27,6 +28,8 @@ use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use pricefeed::pricefeed::PriceData;
 use service::geolocation::geolocator::GeoLocator;
+
+// use crate::helpers::payment_helpers::start_retry_processor;
 
 pub struct AppState {
     db: Database,
@@ -61,10 +64,20 @@ async fn main() -> std::io::Result<()> {
 
     let price_data = pricefeed::pricefeed::init_price_feed().await;
 
-    println!("Server started successfully...");
-
+    
     let geo_locator = GeoLocator::new(config.ip_info_token.clone());
     let port = config.port.parse().expect("PORT must be i16 type");
+    
+    let app_state = web::Data::new(AppState {
+        db: db.clone(),
+        env: config.clone(),
+        redis_pool: redis_pool.clone(),
+        geo_locator: geo_locator.clone(),
+        price_feed: price_data.clone(),
+    });
+    // start_retry_processor(app_state.clone()).await;
+    
+    log::info!("Server started successfully...");
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -74,17 +87,12 @@ async fn main() -> std::io::Result<()> {
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 header::ACCEPT,
-            ]);
-        // .supports_credentials()
+                header::HeaderName::from_static("x-requested-with"),
+            ])
+            .supports_credentials();
 
         App::new()
-            .app_data(web::Data::from(Arc::new(AppState {
-                db: db.clone(),
-                env: config.clone(),
-                redis_pool: redis_pool.clone(),
-                geo_locator: geo_locator.clone(),
-                price_feed: price_data.clone(),
-            })))
+            .app_data(app_state.clone())
             .configure(config_scope::config)
             .wrap(cors)
             .wrap(Logger::default())
