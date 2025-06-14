@@ -2,9 +2,9 @@ name: CI - KharonPay Registration Server
 
 on:
   push:
-    branches: ["server-rs"]
+    branches: ["main"]
   pull_request:
-    branches: ["server-rs"]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
