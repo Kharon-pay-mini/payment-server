@@ -375,10 +375,9 @@ pub async fn handle_successful_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state.db.update_transaction(
-                    user_id,
-                    "COMPLETED".to_string()
-                );
+                let rows_affected = app_state
+                    .db
+                    .update_transaction(user_id, "COMPLETED".to_string());
 
                 if rows_affected.unwrap() == 0 {
                     let new_tx = NewTransaction {
@@ -482,10 +481,9 @@ pub async fn handle_failed_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state.db.update_transaction(
-                    user_id,
-                    "FAILED".to_string()
-                );
+                let rows_affected = app_state
+                    .db
+                    .update_transaction(user_id, "FAILED".to_string());
 
                 redis_conn
                     .del::<String, ()>(key)
@@ -566,10 +564,9 @@ pub async fn handle_pending_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                app_state.db.update_transaction(
-                    user_id,
-                    "PENDING".to_string()
-                );
+                app_state
+                    .db
+                    .update_transaction(user_id, "PENDING".to_string());
                 log::info!("Updated disbursement as pending for user: {}", user_id);
             }
         }
@@ -641,10 +638,9 @@ pub async fn handle_processing_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                app_state.db.update_transaction(
-                    user_id,
-                    "PROCESSING".to_string()
-                );
+                app_state
+                    .db
+                    .update_transaction(user_id, "PROCESSING".to_string());
 
                 log::info!("Updated disbursement as processing for user: {}", user_id);
             }

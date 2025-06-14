@@ -66,7 +66,7 @@ pub async fn security_logger_middleware(
                             country: country.clone(),
                             failed_login_attempts: failed_login_attempts as i32,
                             flagged_for_review: flagged_for_review.clone(),
-                            created_at: Utc::now()
+                            created_at: Utc::now(),
                         };
 
                         db.create_user_security_log(new_log);

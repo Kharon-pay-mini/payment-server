@@ -1,6 +1,6 @@
 use crate::helpers::models::AuthHeaders;
 use actix_web::{web::Bytes, HttpRequest};
-use hmac::{ Hmac, Mac};
+use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub fn extract_auth_headers(req: &HttpRequest) -> Result<AuthHeaders, String> {

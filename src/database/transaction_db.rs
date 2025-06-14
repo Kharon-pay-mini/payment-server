@@ -42,7 +42,7 @@ pub trait TransactionImpl: DbAccess {
         let updated_rows = diesel::update(transactions.filter(user_id.eq(user_id_val)))
             .set((
                 payment_status.eq(status),
-                updated_at.eq(Utc::now().naive_utc())
+                updated_at.eq(Utc::now().naive_utc()),
             ))
             .execute(&mut conn)
             .map_err(AppError::DieselError)?;

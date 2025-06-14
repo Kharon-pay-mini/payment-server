@@ -568,7 +568,7 @@ async fn handle_failed_transfer(
                 disbursement.crypto_symbol.clone(),
                 fiat_amount,
                 &disbursement,
-                stored_hash.unwrap_or("0x00".to_string())
+                stored_hash.unwrap_or("0x00".to_string()),
             );
 
             // Notify admin

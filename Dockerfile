@@ -52,6 +52,8 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # script to check if .env exists and copy it
 RUN if [ -f .env ]; then cp .env /app/.env; else echo ".env file not found, skipping copy."; fi
 
+# COPY .env /app/.env
+
 USER appuser
 WORKDIR /app
 

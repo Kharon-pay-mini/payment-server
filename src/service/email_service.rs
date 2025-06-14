@@ -91,18 +91,17 @@ pub async fn send_confirmation_email(
     Ok(())
 }
 
-
 pub async fn send_admin_failed_transfer_alert(
-    details: &TransactionDetails
+    details: &TransactionDetails,
 ) -> Result<(), Box<dyn Error>> {
     let template_path = "src/service/templates/failed_transfer.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
     let smtp_password = env::var("SMTP_PASSWORD")?;
-    
+
     // Get admin emails from environment variable (comma-separated)
-    let admin_emails_str = env::var("ADMIN_EMAILS")
-        .unwrap_or_else(|_| "evans@kharonlabs.com".to_string());
+    let admin_emails_str =
+        env::var("ADMIN_EMAILS").unwrap_or_else(|_| "evans@kharonlabs.com".to_string());
     let admin_emails: Vec<&str> = admin_emails_str.split(',').map(|s| s.trim()).collect();
 
     let mut handlebars = Handlebars::new();
@@ -156,7 +155,6 @@ pub async fn send_admin_failed_transfer_alert(
 
     Ok(())
 }
-
 
 pub async fn send_request_password_reset_email(
     to_email: &str,

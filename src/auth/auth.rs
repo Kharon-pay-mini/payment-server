@@ -60,7 +60,7 @@ async fn store_login_attempt(
                 country: country_clone,
                 failed_login_attempts: failed_login_attempts as i32,
                 flagged_for_review,
-                created_at: Utc::now()
+                created_at: Utc::now(),
             };
 
             if let Err(e) = db.create_user_security_log(new_log) {
@@ -95,7 +95,6 @@ pub async fn verify_admin_role(
     admin_id: Uuid,
     data: &web::Data<AppState>,
 ) -> Result<(), HttpResponse> {
-    
     match data.db.get_user_by_id(admin_id) {
         Ok(user) => {
             if user.role != "Admin" {
@@ -113,12 +112,7 @@ pub async fn verify_admin_role(
     }
 }
 
-
-pub async fn logout(
-    data: &web::Data<AppState>,
-    req: &HttpRequest,
-    user_id: Uuid
-) {
+pub async fn logout(data: &web::Data<AppState>, req: &HttpRequest, user_id: Uuid) {
     let client_ip = req
         .connection_info()
         .realip_remote_addr()

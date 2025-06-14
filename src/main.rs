@@ -41,12 +41,13 @@ pub struct AppState {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+    env_logger::init();
+
     log::info!("Starting Server......");
     if std::env::var_os("RUST_LOG").is_none() {
         std::env::set_var("RUST_LOG", "actix_web=info");
     }
-    dotenv().ok();
-    env_logger::init();
 
     let config = Config::init();
 
@@ -64,10 +65,9 @@ async fn main() -> std::io::Result<()> {
 
     let price_data = pricefeed::pricefeed::init_price_feed().await;
 
-    
     let geo_locator = GeoLocator::new(config.ip_info_token.clone());
     let port = config.port.parse().expect("PORT must be i16 type");
-    
+
     let app_state = web::Data::new(AppState {
         db: db.clone(),
         env: config.clone(),
@@ -76,7 +76,7 @@ async fn main() -> std::io::Result<()> {
         price_feed: price_data.clone(),
     });
     // start_retry_processor(app_state.clone()).await;
-    
+
     log::info!("Server started successfully...");
 
     HttpServer::new(move || {
