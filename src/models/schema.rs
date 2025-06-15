@@ -41,6 +41,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    user_bank_account (id) {
+        id -> Uuid,
+        user_id -> Uuid,
+        #[max_length = 255]
+        bank_name -> Varchar,
+        #[max_length = 50]
+        account_number -> Varchar,
+        created_at -> Nullable<Timestamptz>,
+        updated_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
     user_security_logs (log_id) {
         log_id -> Uuid,
         user_id -> Uuid,
@@ -86,12 +99,14 @@ diesel::table! {
 
 diesel::joinable!(otp -> users (user_id));
 diesel::joinable!(transactions -> users (user_id));
+diesel::joinable!(user_bank_account -> users (user_id));
 diesel::joinable!(user_security_logs -> users (user_id));
 diesel::joinable!(user_wallet -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     otp,
     transactions,
+    user_bank_account,
     user_security_logs,
     user_wallet,
     users,

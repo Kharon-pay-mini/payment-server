@@ -22,7 +22,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_security_logs_by_user_id(
+    fn _get_security_logs_by_user_id(
         &self,
         find_user: uuid::Uuid,
     ) -> Result<Vec<UserSecurityLog>, AppError> {

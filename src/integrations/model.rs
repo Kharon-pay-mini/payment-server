@@ -182,10 +182,9 @@ pub struct DisbursementSchema {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct InitDisbursementRequest {
+pub struct InitOfframpRequest {
     pub crypto_transaction: CryptoTransaction,
-    pub bank_name: String,
-    pub account_number: String,
+    pub bank_account_id: Uuid,
     pub currency: String,
     pub order_type: String,
     pub payment_method: String,

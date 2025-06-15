@@ -1,4 +1,7 @@
+use actix_web::HttpResponse;
 use uuid::Uuid;
+
+use crate::integrations::model::PaymentResult;
 
 pub fn validate_user_id(user_id_str: &str) -> Result<Uuid, String> {
     let user_id = Uuid::parse_str(user_id_str).map_err(|_| "Invalid user ID format")?;
@@ -18,16 +21,43 @@ pub fn validate_reference(reference: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn validate_amount_match(request_amount: &str, pending_amount: i64) -> Result<i64, String> {
-    let amount: i64 = request_amount
-        .parse()
-        .map_err(|_| "Invalid amount format")?;
+pub fn validate_amount_match(
+    request_amount: &str,
+    pending_amount: i64,
+    reference: String,
+) -> Result<i64, HttpResponse> {
+    let amount: i64 = match request_amount.parse() {
+        Ok(value) => value,
+        Err(_) => {
+            log::error!("Invalid amount format: {}", request_amount);
+            return Err(HttpResponse::BadRequest().json(PaymentResult {
+                success: false,
+                reference: reference.clone(),
+                transaction_ref: None,
+                status: None,
+                message: "Invalid amount format".to_string(),
+                error: Some("Failed to parse amount".to_string()),
+            }));
+        }
+    };
 
     if amount != pending_amount {
-        return Err(format!(
-            "Amount mismatch: expected {}, got {}",
-            pending_amount, amount
-        ));
+        log::error!(
+            "Crypto amount not equal to initialized amount. pending: {} - final: {}",
+            pending_amount,
+            request_amount
+        );
+        return Err(HttpResponse::BadRequest().json(PaymentResult {
+            success: false,
+            reference: reference.clone(),
+            transaction_ref: None,
+            status: None,
+            message: "Crypto amount not equal to initialized amount".to_string(),
+            error: Some(format!(
+                "Amount mismatch: expected {}, got {}",
+                pending_amount, amount
+            )),
+        }));
     }
 
     Ok(amount)
@@ -49,3 +79,5 @@ pub fn verify_timestamp(timestamp_str: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+// TODO: Using map.err will break the server quietly if there is an error, we need to handle this better by returning a proper error response

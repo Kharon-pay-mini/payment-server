@@ -90,6 +90,27 @@ pub struct NewTransaction {
     pub settlement_date: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Queryable, Clone, AsChangeset, Insertable)]
+#[diesel(table_name=crate::models::schema::user_bank_account)]
+pub struct UserBankAccount {
+    pub id: uuid::Uuid,
+    pub user_id: uuid::Uuid, // foreign key ref
+    pub bank_name: String,
+    pub account_number: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, AsChangeset, Insertable)]
+#[diesel(table_name=crate::models::schema::user_bank_account)]
+pub struct NewUserBankAccount {
+    pub user_id: uuid::Uuid,
+    pub bank_name: String,
+    pub account_number: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Queryable, AsChangeset, Insertable)]
 #[diesel(table_name=crate::models::schema::user_security_logs)]
 pub struct UserSecurityLog {
@@ -149,19 +170,6 @@ pub struct TokenClaims {
     pub exp: usize,
 }
 
-/*  MODEL SCHEMAS */
-#[derive(Debug, Deserialize)]
-pub struct CreateUserSchema {
-    pub email: String,
-    pub phone: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UserWalletSchema {
-    pub wallet_address: String,
-    pub network: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct TransactionSchema {
     pub order_type: String,
@@ -173,28 +181,6 @@ pub struct TransactionSchema {
     pub payment_status: String,
     pub tx_hash: String,
     pub reference: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UserSecurityLogsSchema {
-    pub user_id: uuid::Uuid,
-    pub ip_address: String,
-    pub city: String,
-    pub country: String,
-    pub failed_login_attempts: i64,
-    pub flagged_for_review: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OtpSchema {
-    pub user_id: uuid::Uuid,
-    pub email: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ValidateOtpSchema {
-    pub user_id: uuid::Uuid,
-    pub otp: i32,
 }
 
 // /*  DISPLAY IMPLEMENTATION FOR ENUMS */

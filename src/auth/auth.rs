@@ -1,13 +1,11 @@
 use crate::database::user_db::UserImpl;
-use crate::models::models::{TokenClaims, User};
 use crate::{
     database::db::AppError, database::user_security_log_db::UserSecurityLogsImpl,
     models::models::NewUserSecurityLog, AppState,
 };
-use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
-use chrono::{Date, DateTime, Utc};
-use jsonwebtoken::{DecodingKey, Validation};
-use log::info;
+use actix_web::{web, HttpRequest, HttpResponse};
+use chrono::Utc;
+
 use serde_json::json;
 use std::result::Result;
 use uuid::Uuid;
@@ -17,7 +15,7 @@ async fn store_login_attempt(
     req: &HttpRequest,
     user_id: Uuid,
     success: bool,
-    failure_reason: Option<String>,
+    _failure_reason: Option<String>,
 ) -> Result<(), AppError> {
     let ip_address = req
         .connection_info()
@@ -74,13 +72,13 @@ async fn store_login_attempt(
     Ok(())
 }
 
-pub async fn log_successful_login(app_state: &AppState, req: &HttpRequest, user_id: Uuid) {
+pub async fn _log_successful_login(app_state: &AppState, req: &HttpRequest, user_id: Uuid) {
     if let Err(e) = store_login_attempt(app_state, req, user_id, true, None).await {
         log::error!("Failed to log successful login: {:?}", e);
     }
 }
 
-pub async fn log_failed_login(
+pub async fn _log_failed_login(
     app_state: &AppState,
     req: &HttpRequest,
     user_id: Uuid,
@@ -91,7 +89,7 @@ pub async fn log_failed_login(
     }
 }
 
-pub async fn verify_admin_role(
+pub async fn _verify_admin_role(
     admin_id: Uuid,
     data: &web::Data<AppState>,
 ) -> Result<(), HttpResponse> {
@@ -110,28 +108,4 @@ pub async fn verify_admin_role(
             "message": "User not found or failed to verify user role"
         }))),
     }
-}
-
-pub async fn logout(data: &web::Data<AppState>, req: &HttpRequest, user_id: Uuid) {
-    let client_ip = req
-        .connection_info()
-        .realip_remote_addr()
-        .unwrap_or("unknown")
-        .to_string();
-
-    let user_agent = req
-        .headers()
-        .get("user-agent")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("unknown");
-
-    info!(
-        "User logout - ID: {}, IP: {}, User-Agent: {}, Timestamp: {}",
-        user_id,
-        client_ip,
-        user_agent,
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    );
-
-    // log user logout?
 }

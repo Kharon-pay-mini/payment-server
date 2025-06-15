@@ -255,7 +255,7 @@ pub async fn retrieve_pending_disbursement(
     }
 }
 
-pub async fn delete_pending_disbursement(
+pub async fn _delete_pending_disbursement(
     app_state: &web::Data<AppState>,
     reference: &str,
     user_id: Uuid,
