@@ -1,21 +1,18 @@
 use actix_web::web;
-use chrono::Utc;
+
 use num_traits::FromPrimitive;
 use redis::AsyncCommands;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use rust_decimal::Decimal;
-use sha2::{Digest, Sha512};
+
 use uuid::Uuid;
 
 use crate::{
     database::{db::AppError, transaction_db::TransactionImpl, user_db::UserImpl},
-    helpers::{
-        models::{RetryableTransfer, TransferDetails},
-        payment_helpers::{
-            calculate_fiat_amount, create_transaction_details, notify_admin_of_failed_transfer,
-        },
+    helpers::payment_helpers::{
+        calculate_fiat_amount, create_transaction_details, notify_admin_of_failed_transfer,
     },
-    integrations::model::{FlutterwaveTransferResponse, PendingDisbursement, TransactionDetails},
+    integrations::model::{FlutterwaveTransferResponse, PendingDisbursement},
     models::models::NewTransaction,
     pricefeed::pricefeed,
     service::email_service::send_confirmation_email,
@@ -457,10 +454,10 @@ async fn handle_reversed_transfer(
             })?;
 
             if let Some(data_str) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
+                let _disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state
+                let _rows_affected = app_state
                     .db
                     .update_transaction(user_id, "REVERSED".to_string());
 
@@ -645,7 +642,7 @@ async fn handle_pending_transfer(
             })?;
 
             if let Some(data_str) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data_str)
+                let _disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
                 let _ = app_state

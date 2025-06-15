@@ -23,7 +23,6 @@ use config::{
     redis_config::{init_redis_pool, RedisPool},
 };
 use database::db::Database;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use middleware::security_log::security_logger_middleware;
 use pricefeed::pricefeed::PriceData;

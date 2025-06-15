@@ -1,6 +1,6 @@
 use crate::database::{
-    otp_db::OtpImpl, transaction_db::TransactionImpl, user_db::UserImpl,
-    user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
+    otp_db::OtpImpl, transaction_db::TransactionImpl, user_bank_account_db::UserBankImpl,
+    user_db::UserImpl, user_security_log_db::UserSecurityLogsImpl,
 };
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
@@ -72,8 +72,8 @@ impl DbAccess for Database {
     }
 }
 
-impl UserWalletImpl for Database {}
 impl UserImpl for Database {}
 impl OtpImpl for Database {}
 impl TransactionImpl for Database {}
 impl UserSecurityLogsImpl for Database {}
+impl UserBankImpl for Database {}

@@ -1,4 +1,4 @@
-use crate::database::{db::AppError, user_security_log_db::UserSecurityLogsImpl};
+use crate::database::user_security_log_db::UserSecurityLogsImpl;
 use crate::models::models::NewUserSecurityLog;
 use crate::{models::models::TokenClaims, AppState};
 use actix_web::{
@@ -69,7 +69,7 @@ pub async fn security_logger_middleware(
                             created_at: Utc::now(),
                         };
 
-                        db.create_user_security_log(new_log);
+                        let _ = db.create_user_security_log(new_log);
                     }
                 }
             }

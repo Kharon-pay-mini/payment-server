@@ -10,7 +10,7 @@ use std::error::Error;
 
 use crate::integrations::model::TransactionDetails;
 
-pub async fn send_verification_email(to_email: &str, otp: i32) -> Result<(), Box<dyn Error>> {
+pub async fn _send_verification_email(to_email: &str, otp: i32) -> Result<(), Box<dyn Error>> {
     let template_path = "src/service/templates/request_otp.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
@@ -156,7 +156,7 @@ pub async fn send_admin_failed_transfer_alert(
     Ok(())
 }
 
-pub async fn send_request_password_reset_email(
+pub async fn _send_request_password_reset_email(
     to_email: &str,
     link: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -192,7 +192,7 @@ pub async fn send_request_password_reset_email(
     Ok(())
 }
 
-pub async fn send_password_reset_email(to_email: &str) -> Result<(), Box<dyn Error>> {
+pub async fn _send_password_reset_email(to_email: &str) -> Result<(), Box<dyn Error>> {
     let template_path = "./templates/reset_password.hbs";
     let from_email = env::var("EMAIL_FROM")?;
     let smtp_username = env::var("SMTP_USERNAME")?;
