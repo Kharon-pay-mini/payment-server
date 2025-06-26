@@ -21,7 +21,7 @@ pub trait UserBankImpl: DbAccess {
 
     fn _get_banks_by_user_id(
         &self,
-        find_user: uuid::Uuid,
+        find_user: &str,
     ) -> Result<Vec<UserBankAccount>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
@@ -46,7 +46,7 @@ pub trait UserBankImpl: DbAccess {
     fn _get_bank_by_account_number_and_user_id(
         &self,
         find_account_number: String,
-        find_user: uuid::Uuid,
+        find_user: &str,
     ) -> Result<UserBankAccount, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 

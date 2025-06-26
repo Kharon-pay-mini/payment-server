@@ -207,7 +207,7 @@ pub async fn disburse_payment(
 pub async fn store_pending_disbursement(
     app_state: &web::Data<AppState>,
     reference: &str,
-    user_id: Uuid,
+    user_id: &str,
     disbursement: &PendingDisbursement,
 ) -> Result<(), String> {
     let mut redis_conn = app_state
@@ -230,7 +230,7 @@ pub async fn store_pending_disbursement(
 pub async fn retrieve_pending_disbursement(
     app_state: &web::Data<AppState>,
     reference: &str,
-    user_id: Uuid,
+    user_id: &str,
 ) -> Result<PendingDisbursement, String> {
     let mut redis_conn = app_state
         .redis_pool
@@ -362,10 +362,7 @@ pub async fn handle_successful_disbursement(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to retrieve pending disbursement from Redis: {}", e)
@@ -377,7 +374,7 @@ pub async fn handle_successful_disbursement(
 
                 let rows_affected = app_state
                     .db
-                    .update_transaction(user_id, "COMPLETED".to_string());
+                    .update_transaction(&user_id, "COMPLETED".to_string());
 
                 if rows_affected.unwrap() == 0 {
                     let new_tx = NewTransaction {
@@ -468,10 +465,7 @@ pub async fn handle_failed_disbursement(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to retrieve pending disbursement from Redis: {}", e)
@@ -483,7 +477,7 @@ pub async fn handle_failed_disbursement(
 
                 let rows_affected = app_state
                     .db
-                    .update_transaction(user_id, "FAILED".to_string());
+                    .update_transaction(&user_id, "FAILED".to_string());
 
                 redis_conn
                     .del::<String, ()>(key)
@@ -551,10 +545,7 @@ pub async fn handle_pending_disbursement(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to retrieve pending disbursement from Redis: {}", e)
@@ -566,7 +557,7 @@ pub async fn handle_pending_disbursement(
 
                 app_state
                     .db
-                    .update_transaction(user_id, "PENDING".to_string());
+                    .update_transaction(&user_id, "PENDING".to_string());
                 log::info!("Updated disbursement as pending for user: {}", user_id);
             }
         }
@@ -625,10 +616,7 @@ pub async fn handle_processing_disbursement(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to retrieve pending disbursement from Redis: {}", e)
@@ -640,7 +628,7 @@ pub async fn handle_processing_disbursement(
 
                 app_state
                     .db
-                    .update_transaction(user_id, "PROCESSING".to_string());
+                    .update_transaction(&user_id, "PROCESSING".to_string());
 
                 log::info!("Updated disbursement as processing for user: {}", user_id);
             }

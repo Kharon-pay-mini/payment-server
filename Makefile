@@ -31,6 +31,9 @@ install:
 	cargo add sha2
 	cargo add hex
 	cargo add anyhow
+	cargo add starknet
+	cargo add url
+	cargo add lazy_static
 	cargo install cargo-watch
 
 

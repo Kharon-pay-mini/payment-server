@@ -92,7 +92,7 @@ pub struct DisbursementDetails {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PendingDisbursement {
-    pub user_id: Uuid,
+    pub user_id: String,
     pub bank_code: String,
     pub bank_name: String,
     pub account_number: String,

@@ -33,7 +33,7 @@ pub fn calculate_fiat_amount(crypto_amount: i64, exchange_rate: i64) -> i64 {
 }
 
 pub fn create_transaction_record(
-    user_id: Uuid,
+    user_id: String,
     pending_disbursement: &PendingDisbursement,
     crypto_amount: i64,
     fiat_amount: i64,
@@ -42,7 +42,7 @@ pub fn create_transaction_record(
     transaction_hash: String,
 ) -> NewTransaction {
     NewTransaction {
-        user_id,
+        user_id: user_id.clone(),
         order_type: pending_disbursement.order_type.clone(),
         crypto_amount: Decimal::from_f64(crypto_amount as f64)
             .expect("Invalid crypto amount conversion"),
@@ -112,7 +112,7 @@ pub async fn notify_admin_of_failed_transfer(
 
 pub fn get_and_confirm_bank_details(
     db: &Database,
-    user_id: Uuid,
+    user_id: &str,
     bank_account_id: Uuid,
     reference: String,
 ) -> Result<UserBankAccount, HttpResponse> {
@@ -190,7 +190,7 @@ pub async fn get_bank_code_and_verify_account(
         }
     };
 
-    match verify_account_via_flutterwave(&app_state, &bank_code, &bank_details.account_number).await
+    match verify_account_via_flutterwave(&app_state, &bank_details.account_number, &bank_code).await
     {
         Ok(account_details) => return Ok((account_details, bank_code)),
         Err(e) => {
@@ -208,7 +208,7 @@ pub async fn get_bank_code_and_verify_account(
 }
 
 pub async fn create_and_and_store_pending_transactions_to_redis(
-    user_id: Uuid,
+    user_id: String,
     bank_code: String,
     bank_details: &UserBankAccount,
     account_name: String,
@@ -218,7 +218,7 @@ pub async fn create_and_and_store_pending_transactions_to_redis(
     app_state: &web::Data<AppState>,
 ) -> Result<(), HttpResponse> {
     let pending_disbursement = PendingDisbursement {
-        user_id,
+        user_id: user_id.clone(),
         bank_code: bank_code.clone(),
         bank_name: bank_details.bank_name.clone(),
         account_number: bank_details.account_number.clone(),
@@ -232,7 +232,7 @@ pub async fn create_and_and_store_pending_transactions_to_redis(
     };
 
     if let Err(e) =
-        store_pending_disbursement(&app_state, &reference, user_id, &pending_disbursement).await
+        store_pending_disbursement(&app_state, &reference, &user_id, &pending_disbursement).await
     {
         return Err(
             HttpResponse::InternalServerError().json(InitDisbursementResponse {
@@ -280,7 +280,7 @@ pub fn run_confirm_disburse_validations(
     req: HttpRequest,
     app_state: &web::Data<AppState>,
     body: &web::Bytes,
-) -> Result<(ConfirmDisbursementRequest, Uuid), HttpResponse> {
+) -> Result<(ConfirmDisbursementRequest, String), HttpResponse> {
     let auth_headers = match extract_auth_headers(&req) {
         Ok(headers) => headers,
         Err(error) => {
@@ -378,7 +378,7 @@ pub async fn structure_and_record_initialized_disbursement(
     disbursement: FlutterwaveTransferData,
     app_state: &web::Data<AppState>,
     request: ConfirmDisbursementRequest,
-    user_id: Uuid,
+    user_id: String,
     pending_disbursement: PendingDisbursement,
     crypto_amount: i64,
     fiat_amount: i64,
@@ -387,7 +387,7 @@ pub async fn structure_and_record_initialized_disbursement(
     let reference = disbursement.reference.clone();
 
     let new_tx = create_transaction_record(
-        user_id,
+        user_id.clone(),
         &pending_disbursement,
         crypto_amount,
         fiat_amount,

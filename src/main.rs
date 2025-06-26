@@ -8,6 +8,7 @@ mod models;
 mod pricefeed;
 mod routes;
 mod service;
+mod wallets;
 
 use std::sync::{Arc, Mutex};
 

@@ -24,7 +24,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
 
     fn _get_security_logs_by_user_id(
         &self,
-        find_user: uuid::Uuid,
+        find_user: &str,
     ) -> Result<Vec<UserSecurityLog>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
@@ -34,7 +34,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_user_total_failed_logins(&self, uid: uuid::Uuid) -> Result<i64, AppError> {
+    fn get_user_total_failed_logins(&self, uid: String) -> Result<i64, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         user_security_logs
@@ -45,7 +45,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_user_security_logs_count(&self, uid: uuid::Uuid) -> Result<i64, AppError> {
+    fn get_user_security_logs_count(&self, uid: &str) -> Result<i64, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         user_security_logs
@@ -57,7 +57,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
 
     fn get_user_security_logs_with_limit(
         &self,
-        uid: uuid::Uuid,
+        uid: &str,
         limit_count: Option<i64>,
     ) -> Result<Vec<UserSecurityLog>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
@@ -73,7 +73,7 @@ pub trait UserSecurityLogsImpl: DbAccess {
 
     fn get_user_security_logs_paginated(
         &self,
-        uid: uuid::Uuid,
+        uid: &str,
         limit_count: i64,
         offset_count: i64,
     ) -> Result<Vec<UserSecurityLog>, AppError> {
