@@ -13,7 +13,7 @@ use uuid::Uuid;
 async fn store_login_attempt(
     app_state: &AppState,
     req: &HttpRequest,
-    user_id: Uuid,
+    user_id: String,
     success: bool,
     _failure_reason: Option<String>,
 ) -> Result<(), AppError> {
@@ -44,7 +44,7 @@ async fn store_login_attempt(
             let mut flagged_for_review = false;
 
             if !success {
-                if let Ok(recent_failures) = db.get_user_total_failed_logins(user_id) {
+                if let Ok(recent_failures) = db.get_user_total_failed_logins(user_id.clone()) {
                     if recent_failures + failed_login_attempts >= 3 {
                         flagged_for_review = true;
                     }
@@ -52,7 +52,7 @@ async fn store_login_attempt(
             }
 
             let new_log = NewUserSecurityLog {
-                user_id,
+                user_id: user_id.clone(),
                 ip_address: ip_address_clone,
                 city: city_clone,
                 country: country_clone,
@@ -64,7 +64,7 @@ async fn store_login_attempt(
             if let Err(e) = db.create_user_security_log(new_log) {
                 log::error!("Failed to store login attempt: {:?}", e);
             } else {
-                log::info!("Login attempt stored successfully for user: {}", user_id);
+                log::info!("Login attempt stored successfully for user: {}", user_id.clone());
             }
         }
     });
@@ -72,8 +72,8 @@ async fn store_login_attempt(
     Ok(())
 }
 
-pub async fn _log_successful_login(app_state: &AppState, req: &HttpRequest, user_id: Uuid) {
-    if let Err(e) = store_login_attempt(app_state, req, user_id, true, None).await {
+pub async fn _log_successful_login(app_state: &AppState, req: &HttpRequest, user_id: &str) {
+    if let Err(e) = store_login_attempt(app_state, req, user_id.to_string().clone(), true, None).await {
         log::error!("Failed to log successful login: {:?}", e);
     }
 }
@@ -84,13 +84,13 @@ pub async fn _log_failed_login(
     user_id: Uuid,
     reason: Option<String>,
 ) {
-    if let Err(e) = store_login_attempt(app_state, req, user_id, false, reason).await {
+    if let Err(e) = store_login_attempt(app_state, req, user_id.to_string().clone(), false, reason).await {
         log::error!("Failed to log failed login: {:?}", e);
     }
 }
 
 pub async fn _verify_admin_role(
-    admin_id: Uuid,
+    admin_id: &str,
     data: &web::Data<AppState>,
 ) -> Result<(), HttpResponse> {
     match data.db.get_user_by_id(admin_id) {

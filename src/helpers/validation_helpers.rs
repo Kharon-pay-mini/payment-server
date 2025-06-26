@@ -1,16 +1,15 @@
 use actix_web::HttpResponse;
-use uuid::Uuid;
 
 use crate::integrations::model::PaymentResult;
 
-pub fn validate_user_id(user_id_str: &str) -> Result<Uuid, String> {
-    let user_id = Uuid::parse_str(user_id_str).map_err(|_| "Invalid user ID format")?;
+pub fn validate_user_id(user_id_str: &str) -> Result<String, String> {
+    let user_id = user_id_str;
 
     if user_id.to_string().len() > 40 {
         return Err("User ID too long".to_string());
     }
 
-    Ok(user_id)
+    Ok(user_id.to_string().clone())
 }
 
 pub fn validate_reference(reference: &str) -> Result<(), String> {

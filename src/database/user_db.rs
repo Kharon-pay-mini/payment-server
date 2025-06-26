@@ -17,7 +17,7 @@ pub trait UserImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_user_by_id(&self, find_id: uuid::Uuid) -> Result<User, AppError> {
+    fn get_user_by_id(&self, find_id: &str) -> Result<User, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
         users
             .find(find_id)

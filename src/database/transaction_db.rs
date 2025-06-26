@@ -22,7 +22,7 @@ pub trait TransactionImpl: DbAccess {
 
     fn get_transaction_by_user_id(
         &self,
-        find_user: uuid::Uuid,
+        find_user: &str,
     ) -> Result<Vec<Transaction>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
@@ -34,7 +34,7 @@ pub trait TransactionImpl: DbAccess {
 
     fn update_transaction(
         &self,
-        user_id_val: uuid::Uuid,
+        user_id_val: &str,
         status: String,
     ) -> Result<usize, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;

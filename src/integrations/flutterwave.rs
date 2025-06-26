@@ -233,10 +233,7 @@ async fn handle_successful_transfer(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to get pending disbursement data from Redis: {}", e)
@@ -252,7 +249,7 @@ async fn handle_successful_transfer(
                 // Try to update existing transaction first
                 match app_state
                     .db
-                    .update_transaction(user_id, "COMPLETED".to_string())
+                    .update_transaction(&user_id, "COMPLETED".to_string())
                 {
                     Ok(rows_affected) => {
                         if rows_affected == 0 {
@@ -323,7 +320,7 @@ async fn handle_successful_transfer(
                 }
 
                 // Send confirmation email
-                match app_state.db.get_user_by_id(user_id) {
+                match app_state.db.get_user_by_id(user_id.as_str().clone()) {
                     Ok(user) => {
                         let usdt_ngn_rate = match pricefeed::get_current_usdt_ngn_rate(
                             app_state.price_feed.clone(),
@@ -444,10 +441,7 @@ async fn handle_reversed_transfer(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!("Failed to retrieve pending disbursement from Redis: {}", e)
@@ -459,7 +453,7 @@ async fn handle_reversed_transfer(
 
                 let _rows_affected = app_state
                     .db
-                    .update_transaction(user_id, "REVERSED".to_string());
+                    .update_transaction(&user_id, "REVERSED".to_string());
 
                 // ALERT ADMIN
                 // RETRY DISBURSEMENT
@@ -525,14 +519,8 @@ async fn handle_failed_transfer(
             continue;
         }
 
-        let user_id = match Uuid::parse_str(parts[2]) {
-            Ok(id) => id,
-            Err(e) => {
-                log::warn!("Failed to parse user_id from key {}: {}", key, e);
-                continue;
-            }
-        };
-
+        let user_id = parts[2].to_string();
+            
         let pending_data: Option<String> = redis_conn
             .get(&key)
             .await
@@ -629,10 +617,7 @@ async fn handle_pending_transfer(
                 continue;
             }
 
-            let user_id = match Uuid::parse_str(parts[2]) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+            let user_id = parts[2].to_string();
 
             let pending_data: Option<String> = redis_conn.get(&key).await.map_err(|e| {
                 format!(
@@ -647,7 +632,7 @@ async fn handle_pending_transfer(
 
                 let _ = app_state
                     .db
-                    .update_transaction(user_id, "PENDING".to_string());
+                    .update_transaction(&user_id, "PENDING".to_string());
                 log::info!("Updated transaction to PENDING for user: {}", user_id);
             }
         }
