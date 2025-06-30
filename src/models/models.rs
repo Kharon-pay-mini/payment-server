@@ -1,8 +1,21 @@
+use std::io::Write;
+
+use account_sdk::account::session::policy::Policy;
 use chrono::prelude::*;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use diesel::{AsChangeset, Insertable, Queryable};
+use diesel::{
+    deserialize::{self, FromSql, Result as DeserializeResult},
+    expression::AsExpression,
+    pg::{Pg, PgValue},
+    serialize::{self, IsNull, Output, ToSql},
+    sql_types::{Jsonb, Text},
+    AsChangeset, Insertable, Queryable,
+};
+use serde_json::Value;
+
+use crate::wallets::models::SessionPolicies;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize, Serialize, Clone, Queryable, AsChangeset, Insertable)]
@@ -39,6 +52,7 @@ pub struct UserWallet {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
     pub updated_at: Option<DateTime<Utc>>,
+    pub controller_info: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, AsChangeset, Insertable)]
@@ -47,6 +61,25 @@ pub struct NewUserWallet {
     pub user_id: String,
     pub wallet_address: Option<String>,
     pub network_used_last: Option<String>,
+    pub controller_info: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, diesel::expression::AsExpression)]
+#[diesel(sql_type = Jsonb)]
+pub struct PolicyList(pub Vec<Policy>);
+
+#[derive(Debug, Deserialize, Serialize, Clone, AsChangeset, Insertable, Queryable)]
+#[diesel(table_name=crate::models::schema::session_controller_info)]
+pub struct ControllerSessionInfo {
+    pub user_id: String,
+    pub username: String,
+    pub controller_address: String,
+    pub session_policies: PolicyList,
+    pub session_expires_at: i64,
+    pub user_permissions: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: DateTime<Utc>,
+    pub is_deployed: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Queryable, AsChangeset, Insertable)]
@@ -196,3 +229,43 @@ macro_rules! impl_display {
     };
 }
 impl_display!(Role);
+
+// Diesel impl for SessionPolicies
+impl ToSql<Text, diesel::pg::Pg> for SessionPolicies {
+    fn to_sql<'b>(
+        &'b self,
+        out: &mut diesel::serialize::Output<'b, '_, diesel::pg::Pg>,
+    ) -> diesel::serialize::Result {
+        let json_string = serde_json::to_string(self)?;
+        out.write_all(json_string.as_bytes())?;
+        Ok(diesel::serialize::IsNull::No)
+    }
+}
+
+impl FromSql<Text, diesel::pg::Pg> for SessionPolicies {
+    fn from_sql(
+        bytes: <diesel::pg::Pg as diesel::backend::Backend>::RawValue<'_>,
+    ) -> diesel::deserialize::Result<Self> {
+        let json_str = std::str::from_utf8(bytes.as_bytes())?;
+        Ok(serde_json::from_str(json_str)?)
+    }
+}
+
+impl ToSql<Jsonb, Pg> for PolicyList {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> diesel::serialize::Result {
+        let json_string = serde_json::to_string(&self.0)?;
+        // Write the JSON string as bytes, prefixed with version byte (1) for JSONB
+        out.write_all(&[1u8])?; // JSONB version byte
+        out.write_all(json_string.as_bytes())?;
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Jsonb, Pg> for PolicyList {
+    fn from_sql(bytes: PgValue) -> DeserializeResult<Self> {
+        let json_bytes = &bytes.as_bytes()[1..];
+        let json_str = std::str::from_utf8(json_bytes)?;
+        let policies: Vec<Policy> = serde_json::from_str(json_str)?;
+        Ok(PolicyList(policies))
+    }
+}

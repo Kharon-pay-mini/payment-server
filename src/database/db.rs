@@ -1,7 +1,7 @@
-use crate::database::{
+use crate::{database::{
     otp_db::OtpImpl, transaction_db::TransactionImpl, user_bank_account_db::UserBankImpl,
-    user_db::UserImpl, user_security_log_db::UserSecurityLogsImpl,
-};
+    user_db::UserImpl, user_security_log_db::UserSecurityLogsImpl, user_wallet_db::UserWalletImpl,
+}, models::models::UserWallet};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
 use diesel::prelude::*;
@@ -16,6 +16,7 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 pub enum AppError {
     DbConnectionError(PoolError),
     DieselError(diesel::result::Error),
+    SerializationError(String)
 }
 
 #[derive(Debug)]
@@ -77,3 +78,4 @@ impl OtpImpl for Database {}
 impl TransactionImpl for Database {}
 impl UserSecurityLogsImpl for Database {}
 impl UserBankImpl for Database {}
+impl UserWalletImpl for Database {}

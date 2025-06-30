@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration, vec};
 
 use account_sdk::{
-    artifacts::{Version, CONTROLLERS, DEFAULT_CONTROLLER},
+    artifacts::DEFAULT_CONTROLLER,
     controller::Controller,
     factory::ControllerFactory,
     provider::CartridgeJsonRpcProvider,
@@ -10,22 +10,17 @@ use account_sdk::{
 
 use account_sdk::account::session::policy::Policy;
 use actix_web::web;
-use base64::encode;
+use chrono::{DateTime, Utc};
 use starknet::{
     accounts::{
-        Account, AccountFactory, AccountFactoryError, ConnectedAccount, ExecutionEncoding,
-        OpenZeppelinAccountFactory, SingleOwnerAccount,
+        Account, AccountFactory, AccountFactoryError, ExecutionEncoding, SingleOwnerAccount,
     },
     core::{
-        chain_id,
-        types::{
-            BlockId, BlockTag, Call, Felt, FunctionCall, StarknetError, TransactionExecutionStatus,
-            TransactionReceipt, TransactionReceiptWithBlockInfo,
-        },
-        utils::{cairo_short_string_to_felt, get_selector_from_name},
+        types::{Call, Felt, StarknetError},
+        utils::cairo_short_string_to_felt,
     },
     macros::{felt, selector},
-    providers::{Provider, ProviderError},
+    providers::ProviderError,
     signers::{LocalWallet, SigningKey},
 };
 use tokio::time::sleep;
@@ -35,7 +30,15 @@ use crate::{
     database::user_db::UserImpl,
     models::models::User,
     wallets::{
-        helper::{encode_bytearray, get_detailed_error},
+        helper::{
+            build_approve_call, build_payment_call, build_payment_calldata,
+            check_account_deployment_status, check_strk_balance, check_token_balance,
+            create_failed_response, create_provider_from_url, estimate_transaction_gas,
+            execute_transaction_with_receipt, extract_username_from_email,
+            get_or_create_controller_from_db, parse_felt_from_hex, serialize_u256_type,
+            store_controller_in_db, validate_email_format, validate_payment_inputs,
+            validate_username_length,
+        },
         models::{
             ContractMethod, SessionOptions, SessionPolicies, SignMessagePolicy, StarknetDomain,
             StarknetType, TransactionResponse,
@@ -101,6 +104,10 @@ impl PermissionConfig {
 }
 
 impl ControllerService {
+    pub fn new(app_state: web::Data<AppState>) -> Self {
+        Self { app_state }
+    }
+
     pub fn get_user_permissions(&self, user: &User) -> Vec<String> {
         let permission_config = PermissionConfig::new();
         permission_config.get_permissions_for_role(&user.role)
@@ -126,216 +133,109 @@ impl ControllerService {
         Ok((user, permissions))
     }
 
-    pub fn new(app_state: web::Data<AppState>) -> Self {
-        Self { app_state }
-    }
+    fn validate_user_input(
+        &self,
+        user_email: &str,
+        user_permissions: &[String],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Email validation
+        validate_email_format(user_email)?;
 
-    fn extract_username(&self, email: &str) -> String {
-        email.split('@').next().unwrap_or(email).to_string()
-    }
-    async fn generate_session_policies(&self, user_permissions: &[String]) -> SessionPolicies {
-        let mut methods = Vec::new();
+        // Username length validation
+        let username = extract_username_from_email(user_email);
+        validate_username_length(&username)?;
 
-        methods.extend(vec![ContractMethod {
-            name: "Receive Payment".to_string(),
-            entrypoint: "receive_payment".to_string(),
-            description: Some("Receive payment from users to offramp".to_string()),
-        }]);
-
-        if user_permissions.contains(&"admin".to_string()) {
-            methods.extend(vec![
-                ContractMethod {
-                    name: "Add Supported Token".to_string(),
-                    entrypoint: "add_supported_token".to_string(),
-                    description: Some("Add a new supported token".to_string()),
-                },
-                ContractMethod {
-                    name: "Remove Supported Token".to_string(),
-                    entrypoint: "remove_supported_token".to_string(),
-                    description: Some("Remove a supported token".to_string()),
-                },
-                ContractMethod {
-                    name: "Withdraw".to_string(),
-                    entrypoint: "withdraw".to_string(),
-                    description: Some("Withdraw tokens from the contract".to_string()),
-                },
-                ContractMethod {
-                    name: "Pause System".to_string(),
-                    entrypoint: "pause_system".to_string(),
-                    description: Some("Pause the payment system".to_string()),
-                },
-                ContractMethod {
-                    name: "Unpause System".to_string(),
-                    entrypoint: "unpause_system".to_string(),
-                    description: Some("Unpause the payment system".to_string()),
-                },
-            ]);
+        // Permission validation
+        let permission_config = PermissionConfig::new();
+        for permission in user_permissions {
+            if !permission_config.is_valid_permission(permission) {
+                return Err(format!("Invalid permission: {}", permission).into());
+            }
         }
 
-        let contract = self.app_state.env.kharon_pay_contract_address.clone();
+        Ok(())
+    }
+
+    /// Create the owner account
+    fn create_owner_account(
+        &self,
+        provider: CartridgeJsonRpcProvider,
+    ) -> Result<SingleOwnerAccount<CartridgeJsonRpcProvider, LocalWallet>, Box<dyn std::error::Error>>
+    {
         let chain_id = CHAIN_ID.clone();
+        let owner_address = Felt::from_hex(&self.app_state.env.owner_address)?;
+        let signer =
+            SigningKey::from_secret_scalar(Felt::from_hex(&self.app_state.env.owner_private_key)?);
+        let wallet = LocalWallet::from(signer.clone());
 
-        let message_policy = SignMessagePolicy {
-            name: Some("Kharon Pay Message Signing Policy".to_string()),
-            description: Some("Allows signing messages for Kharon Pay transactions".to_string()),
-            types: {
-                let mut types = HashMap::new();
-                types.insert(
-                    "StarknetDomain".to_string(),
-                    vec![
-                        StarknetType {
-                            name: "name".to_string(),
-                            type_name: "shortstring".to_string(),
-                        },
-                        StarknetType {
-                            name: "version".to_string(),
-                            type_name: "shortstring".to_string(),
-                        },
-                        StarknetType {
-                            name: "chainId".to_string(),
-                            type_name: "shortstring".to_string(),
-                        },
-                        StarknetType {
-                            name: "revision".to_string(),
-                            type_name: "shortstring".to_string(),
-                        },
-                    ],
-                );
-                types.insert(
-                    "KharonPayMessage".to_string(),
-                    vec![
-                        StarknetType {
-                            name: "user".to_string(),
-                            type_name: "ContractAddress".to_string(),
-                        },
-                        StarknetType {
-                            name: "action".to_string(),
-                            type_name: "shortstring".to_string(),
-                        },
-                        StarknetType {
-                            name: "amount".to_string(),
-                            type_name: "felt".to_string(),
-                        },
-                        StarknetType {
-                            name: "token".to_string(),
-                            type_name: "ContractAddress".to_string(),
-                        },
-                        StarknetType {
-                            name: "timestamp".to_string(),
-                            type_name: "felt".to_string(),
-                        },
-                        StarknetType {
-                            name: "nonce".to_string(),
-                            type_name: "felt".to_string(),
-                        },
-                    ],
-                );
-                types
-            },
-            primary_type: "KharonPayMessage".to_string(),
-            domain: StarknetDomain {
-                name: "KharonPay".to_string(),
-                version: "1".to_string(),
-                chain_id: chain_id.to_string(),
-                revision: "1".to_string(),
-            },
-        };
+        let account = SingleOwnerAccount::new(
+            provider,
+            wallet,
+            owner_address,
+            chain_id,
+            ExecutionEncoding::New,
+        );
 
-        SessionPolicies {
-            contract,
-            messages: Some(vec![message_policy]),
-        }
+        Ok(account)
     }
 
-    async fn check_deployer_balance_and_deployment_status(
+    pub fn create_owner_from_private_key(&self) -> Result<Owner, Box<dyn std::error::Error>> {
+        let signing_key = SigningKey::from_secret_scalar(parse_felt_from_hex(
+            &self.app_state.env.owner_private_key,
+        )?);
+        Ok(Owner::Signer(Signer::Starknet(signing_key)))
+    }
+
+    async fn verify_deployer_account(
         &self,
         deployer_address: Felt,
-    ) -> Result<Felt, Box<dyn std::error::Error>> {
-        let rpc_url: Url = Url::parse(&self.app_state.env.starknet_rpc_url)?;
-        let provider = CartridgeJsonRpcProvider::new(rpc_url.clone());
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
 
-        let strk_token_contract =
-            felt!("0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d");
-        match provider
-            .call(
-                FunctionCall {
-                    contract_address: strk_token_contract,
-                    entry_point_selector: get_selector_from_name("balanceOf").unwrap(),
-                    calldata: vec![deployer_address],
-                },
-                BlockId::Tag(BlockTag::Latest),
-            )
-            .await
-        {
-            Ok(balance_result) => {
-                let balance = balance_result[0];
-                if balance == Felt::ZERO {
-                    return Err(format!(
-                        "Deployer account {} has zero STRK balance. Please fund.",
-                        format!("{:#x}", deployer_address)
-                    )
-                    .into());
-                }
-                println!("STRK balance of deployer: {}", balance);
-            }
-            Err(e) => {
-                println!("Failed to check deployer account balance: {:?}", e);
-            }
+        check_strk_balance(&provider, deployer_address).await?;
+
+        if !check_account_deployment_status(&provider, deployer_address).await {
+            return Err("Deployer account not deployed".into());
         }
 
-        // Check if the account is already deployed
-        match provider
-            .get_nonce(BlockId::Tag(BlockTag::Latest), deployer_address)
-            .await
-        {
-            Ok(_) => {
-                println!("Deployer account already deployed");
-                return Ok(deployer_address);
-            }
-            Err(e) => {
-                println!("Deployer account not deployed, deploying now...");
-                Err(Box::new(e))
-            }
-        }
+        Ok(())
     }
 
-    async fn check_token_balance_of_user(
+    /// Generate controller factory and compute address
+    fn create_controller_factory_and_address(
         &self,
-        token: &str,
-        user_address: Felt,
-    ) -> Result<Felt, Box<dyn std::error::Error>> {
-        let rpc_url: Url = Url::parse(&self.app_state.env.starknet_rpc_url)?;
-        let provider = CartridgeJsonRpcProvider::new(rpc_url.clone());
+        username: &str,
+        owner: Owner,
+        provider: CartridgeJsonRpcProvider,
+    ) -> Result<(ControllerFactory, Felt), Box<dyn std::error::Error>> {
+        let chain_id = CHAIN_ID.clone();
+        let salt = cairo_short_string_to_felt(username)?;
 
-        let token_felt = Felt::from_hex(token)?;
-        match provider
-            .call(
-                FunctionCall {
-                    contract_address: token_felt,
-                    entry_point_selector: get_selector_from_name("balance_of").unwrap(),
-                    calldata: vec![user_address],
-                },
-                BlockId::Tag(BlockTag::Latest),
-            )
-            .await
-        {
-            Ok(balance_result) => {
-                let balance = balance_result[0];
-                if balance == Felt::ZERO {
-                    return Err(format!(
-                        "User account {} has zero balance for token {}. Please fund.",
-                        user_address, token
-                    )
-                    .into());
-                }
-                println!("Token balance of user: {}", balance);
-                Ok(balance)
-            }
-            Err(e) => {
-                println!("Failed to check user account balance: {:?}", e);
-                Err(format!("Failed to check balance: {:?}", e).into())
-            }
+        let factory = ControllerFactory::new(DEFAULT_CONTROLLER.hash, chain_id, owner, provider);
+
+        let address = factory.address(salt);
+        println!("Controller address for {}: {:#x}", username, address);
+
+        Ok((factory, address))
+    }
+
+    /// Fund controller only if needed
+    async fn fund_controller_with_checks(
+        &self,
+        owner_account: &SingleOwnerAccount<CartridgeJsonRpcProvider, LocalWallet>,
+        controller_address: Felt,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
+        // Check if controller is already deployed (funded controllers are typically deployed)
+        if check_account_deployment_status(&provider, controller_address).await {
+            println!("Controller already deployed, skipping funding");
+            return Ok(());
         }
+
+        println!("Funding controller address...");
+        let funding_amount = felt!("1000000000000000000");
+        self.fund_controller_address(owner_account, controller_address, funding_amount)
+            .await
     }
 
     async fn fund_controller_address(
@@ -375,116 +275,17 @@ impl ControllerService {
         }
     }
 
-    async fn check_controller_is_deployed(&self, controller_address: Felt) -> bool {
-        let rpc_url: Url =
-            Url::parse(&self.app_state.env.starknet_rpc_url).expect("Invalid RPC URL");
-        let provider = CartridgeJsonRpcProvider::new(rpc_url);
-
-        match provider
-            .get_nonce(BlockId::Tag(BlockTag::Latest), controller_address)
-            .await
-        {
-            Ok(_) => {
-                println!(
-                    "Controller at {:#x} is already deployed",
-                    controller_address
-                );
-                true
-            }
-            Err(e) => {
-                println!(
-                    "Controller at {:#x} is not deployed: {:?}",
-                    controller_address, e
-                );
-                false
-            }
-        }
-    }
-
-    fn validate_user_input(
-        &self,
-        user_email: &str,
-        user_permissions: &[String],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Email validation
-        if user_email.is_empty() || !user_email.contains('@') {
-            return Err("Invalid email format".into());
-        }
-
-        // Username length validation
-        let username = self.extract_username(user_email);
-        if username.is_empty() || username.len() > 31 {
-            return Err("Username must be between 1-31 characters".into());
-        }
-
-        // Permission validation
-        let permission_config = PermissionConfig::new();
-        for permission in user_permissions {
-            if !permission_config.is_valid_permission(permission) {
-                return Err(format!("Invalid permission: {}", permission).into());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Create and configure the provider
-    fn create_provider(&self) -> Result<CartridgeJsonRpcProvider, Box<dyn std::error::Error>> {
-        let rpc_url: Url =
-            Url::parse(&self.app_state.env.starknet_rpc_url).map_err(|_| "Invalid RPC URL")?;
-        Ok(CartridgeJsonRpcProvider::new(rpc_url))
-    }
-
-    /// Create the owner account
-    fn create_owner_account(
-        &self,
-        provider: CartridgeJsonRpcProvider,
-    ) -> Result<SingleOwnerAccount<CartridgeJsonRpcProvider, LocalWallet>, Box<dyn std::error::Error>>
-    {
-        let chain_id = CHAIN_ID.clone();
-        let owner_address = Felt::from_hex(&self.app_state.env.owner_address)?;
-        let signer =
-            SigningKey::from_secret_scalar(Felt::from_hex(&self.app_state.env.owner_private_key)?);
-        let wallet = LocalWallet::from(signer.clone());
-
-        let account = SingleOwnerAccount::new(
-            provider,
-            wallet,
-            owner_address,
-            chain_id,
-            ExecutionEncoding::New,
-        );
-
-        Ok(account)
-    }
-
-    /// Generate controller factory and compute address
-    fn create_controller_factory_and_address(
-        &self,
-        username: &str,
-        owner: Owner,
-        provider: CartridgeJsonRpcProvider,
-    ) -> Result<(ControllerFactory, Felt), Box<dyn std::error::Error>> {
-        let chain_id = CHAIN_ID.clone();
-        let salt = cairo_short_string_to_felt(username)?;
-
-        let factory = ControllerFactory::new(DEFAULT_CONTROLLER.hash, chain_id, owner, provider);
-
-        let address = factory.address(salt);
-        println!("Controller address for {}: {:#x}", username, address);
-
-        Ok((factory, address))
-    }
-
     /// Deploy controller if not already deployed
-    async fn deploy_controller(
+    async fn deploy_controller_with_checks(
         &self,
         factory: ControllerFactory,
         salt: Felt,
         controller_address: Felt,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
+
         // Check if controller is already deployed
-        if self.check_controller_is_deployed(controller_address).await {
+        if check_account_deployment_status(&provider, controller_address).await {
             println!("Controller already deployed, skipping deployment");
             return Ok(());
         }
@@ -520,26 +321,8 @@ impl ControllerService {
         }
     }
 
-    /// Fund controller only if needed
-    async fn fund_controller_with_checks(
-        &self,
-        owner_account: &SingleOwnerAccount<CartridgeJsonRpcProvider, LocalWallet>,
-        controller_address: Felt,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Check if controller is already deployed (funded controllers are typically deployed)
-        if self.check_controller_is_deployed(controller_address).await {
-            println!("Controller already deployed, skipping funding");
-            return Ok(());
-        }
-
-        println!("Funding controller address...");
-        let funding_amount = felt!("1000000000000000000");
-        self.fund_controller_address(owner_account, controller_address, funding_amount)
-            .await
-    }
-
     /// Generate session policies based on user permissions
-    fn build_session_policies(
+    pub fn build_session_policies(
         &self,
         user_permissions: &[String],
         contract_address: Felt,
@@ -566,44 +349,168 @@ impl ControllerService {
         policies
     }
 
+    pub async fn generate_session_policies(&self, user_permissions: &[String]) -> SessionPolicies {
+        let mut methods = Vec::new();
+
+        methods.push(ContractMethod {
+            name: "Receive Payment".to_string(),
+            entrypoint: "receive_payment".to_string(),
+            description: Some("Receive payment from users to offramp".to_string()),
+        });
+
+        if user_permissions.contains(&"admin".to_string()) {
+            methods.extend(vec![
+                ContractMethod {
+                    name: "Add Supported Token".to_string(),
+                    entrypoint: "add_supported_token".to_string(),
+                    description: Some("Add a new supported token".to_string()),
+                },
+                ContractMethod {
+                    name: "Remove Supported Token".to_string(),
+                    entrypoint: "remove_supported_token".to_string(),
+                    description: Some("Remove a supported token".to_string()),
+                },
+                ContractMethod {
+                    name: "Withdraw".to_string(),
+                    entrypoint: "withdraw".to_string(),
+                    description: Some("Withdraw tokens from the contract".to_string()),
+                },
+                ContractMethod {
+                    name: "Pause System".to_string(),
+                    entrypoint: "pause_system".to_string(),
+                    description: Some("Pause the payment system".to_string()),
+                },
+                ContractMethod {
+                    name: "Unpause System".to_string(),
+                    entrypoint: "unpause_system".to_string(),
+                    description: Some("Unpause the payment system".to_string()),
+                },
+            ]);
+        }
+
+        let contract = self.app_state.env.kharon_pay_contract_address.clone();
+        let chain_id = CHAIN_ID.clone();
+
+        let message_policy = self.create_message_policy(chain_id);
+
+        SessionPolicies {
+            contract,
+            messages: Some(vec![message_policy]),
+        }
+    }
+
+    fn create_message_policy(&self, chain_id: Felt) -> SignMessagePolicy {
+        let mut types = HashMap::new();
+
+        types.insert(
+            "StarknetDomain".to_string(),
+            vec![
+                StarknetType {
+                    name: "name".to_string(),
+                    type_name: "shortstring".to_string(),
+                },
+                StarknetType {
+                    name: "version".to_string(),
+                    type_name: "shortstring".to_string(),
+                },
+                StarknetType {
+                    name: "chainId".to_string(),
+                    type_name: "shortstring".to_string(),
+                },
+                StarknetType {
+                    name: "revision".to_string(),
+                    type_name: "shortstring".to_string(),
+                },
+            ],
+        );
+
+        types.insert(
+            "KharonPayMessage".to_string(),
+            vec![
+                StarknetType {
+                    name: "user".to_string(),
+                    type_name: "ContractAddress".to_string(),
+                },
+                StarknetType {
+                    name: "action".to_string(),
+                    type_name: "shortstring".to_string(),
+                },
+                StarknetType {
+                    name: "amount".to_string(),
+                    type_name: "felt".to_string(),
+                },
+                StarknetType {
+                    name: "token".to_string(),
+                    type_name: "ContractAddress".to_string(),
+                },
+                StarknetType {
+                    name: "timestamp".to_string(),
+                    type_name: "felt".to_string(),
+                },
+                StarknetType {
+                    name: "nonce".to_string(),
+                    type_name: "felt".to_string(),
+                },
+            ],
+        );
+
+        SignMessagePolicy {
+            name: Some("Kharon Pay Message Signing Policy".to_string()),
+            description: Some("Allows signing messages for Kharon Pay transactions".to_string()),
+            types,
+            primary_type: "KharonPayMessage".to_string(),
+            domain: StarknetDomain {
+                name: "KharonPay".to_string(),
+                version: "1".to_string(),
+                chain_id: chain_id.to_string(),
+                revision: "1".to_string(),
+            },
+        }
+    }
+
+
     pub async fn create_controller(
         &self,
         user_email: &str,
     ) -> Result<(Controller, String, SessionOptions), Box<dyn std::error::Error>> {
         let (user, user_permissions) = self.validate_user_and_get_permissions(user_email)?;
+        let database = &self.app_state.db;
+
+        match get_or_create_controller_from_db(database, &self, &user.id, &user_permissions).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                log::info!("No valid controller session found, creating new one: {}", e);
+            }
+        }
 
         self.validate_user_input(user_email, &user_permissions)?;
-
-        let username = self.extract_username(user_email);
-
-        let provider = self.create_provider()?;
+        let username = extract_username_from_email(user_email);
+        let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
         let owner_account = self.create_owner_account(provider.clone())?;
-        println!("Account address: {:#x}", owner_account.address());
 
-        self.check_deployer_balance_and_deployment_status(owner_account.address())
+        println!("Account address: {:#x}", owner_account.address());
+        self.verify_deployer_account(owner_account.address())
             .await?;
 
-        //create factory and compute controller address
-        let owner = Owner::Signer(Signer::Starknet(SigningKey::from_secret_scalar(
-            Felt::from_hex(&self.app_state.env.owner_private_key)?,
-        )));
-
+        // Create factory and compute controller address
+        let owner = self.create_owner_from_private_key()?;
         let salt = cairo_short_string_to_felt(&username)?;
         let (factory, controller_address) =
             self.create_controller_factory_and_address(&username, owner.clone(), provider.clone())?;
 
-        // fund controller address if needed- with 1 strk
+        // Fund controller address if needed - with 1 strk
         self.fund_controller_with_checks(&owner_account, controller_address)
             .await?;
 
-        // deploy controller if not already deployed
-        self.deploy_controller(factory, salt, controller_address)
+        // Deploy controller if not already deployed
+        self.deploy_controller_with_checks(factory, salt, controller_address)
             .await?;
 
+        // Create controller with session
         let rpc_url = Url::parse(&self.app_state.env.starknet_rpc_url)?;
         let mut controller = Controller::new(
             self.app_state.env.app_id.clone(),
-            username.clone(),
+            username.to_string(),
             DEFAULT_CONTROLLER.hash,
             rpc_url,
             owner.clone(),
@@ -612,18 +519,79 @@ impl ControllerService {
         );
 
         let session_policies = self.generate_session_policies(&user_permissions).await;
-        let contract_address = Felt::from_hex(&session_policies.contract)?;
-
+        let contract_address = parse_felt_from_hex(&session_policies.contract)?;
         let policies = self.build_session_policies(&user_permissions, contract_address);
 
-        let _ = controller.create_session(policies, u32::MAX as u64).await?;
+        // Set session expiration to 30 days 
+        let session_duration_seconds = 30 * 24 * 60 * 60; // 30 days
+        let expires_at = (Utc::now().timestamp() + session_duration_seconds) as u64;
+
+        log::info!(
+            "Creating session with expiration: {} ({})",
+            expires_at,
+            DateTime::<Utc>::from_timestamp(expires_at as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "Invalid timestamp".to_string())
+        );
+
+        controller.create_session(policies, expires_at).await?;
 
         let session_options = SessionOptions {
             policies: session_policies,
-            expires_at: u32::MAX as u64,
+            expires_at,
         };
 
-        Ok((controller, username.clone(), session_options))
+        let username_str = username.to_string();
+
+        // Store in database
+        store_controller_in_db(
+            self,
+            &database,
+            &user.id,
+            &username_str,
+            &controller,
+            &session_options,
+            &user_permissions,
+        )
+        .await?;
+
+        log::info!(
+            "Controller created and stored successfully for user: {}",
+            user.id
+        );
+
+        Ok((controller, username_str, session_options))
+    }
+
+
+    fn validate_payment_permission(&self, user_permissions: &[String]) -> Result<(), String> {
+        if !user_permissions.contains(&"receive_payment".to_string()) {
+            return Err("Insufficient permission to make payment".to_string());
+        }
+
+        Ok(())
+    }
+
+    async fn verify_sufficient_balance(
+        &self,
+        token: &str,
+        user_address: Felt,
+        required_amount: Felt,
+    ) -> Result<(), String> {
+        let token_felt =
+            parse_felt_from_hex(token).map_err(|_| "Invalid token address".to_string())?;
+
+        match check_token_balance(token_felt, user_address).await {
+            Ok(user_balance) => {
+                if user_balance < required_amount {
+                    return Err(
+                        "Insufficient token balance, please fund account and try again".to_string(),
+                    );
+                }
+                Ok(())
+            }
+            Err(_) => Err("Failed to check user balance".to_string()),
+        }
     }
 
     pub async fn receive_payment(
@@ -635,189 +603,77 @@ impl ControllerService {
         user_id: &str,
         user_permissions: &[String],
     ) -> Result<TransactionResponse, Box<dyn std::error::Error>> {
-        // Validate user permissions
-        if !user_permissions.contains(&"receive_payment".to_string()) {
-            return Ok(TransactionResponse {
-                transaction_hash: "0x0".to_string(),
-                status: "failed".to_string(),
-                function_called: "receive_payment".to_string(),
-                message: Some("Insufficient permission".to_string()),
-            });
+        if let Err(msg) = self.validate_payment_permission(user_permissions) {
+            return Ok(create_failed_response("receive_payment", &msg));
         }
 
-        // Validate inputs match Cairo contract requirements
-        if reference.is_empty() {
-            return Ok(TransactionResponse {
-                transaction_hash: "0x0".to_string(),
-                status: "failed".to_string(),
-                function_called: "receive_payment".to_string(),
-                message: Some("Reference cannot be empty".to_string()),
-            });
-        }
+        let amount_felt = match validate_payment_inputs(reference, user_id, amount) {
+            Ok(felt) => felt,
+            Err(msg) => return Ok(create_failed_response("receive_payment", &msg)),
+        };
 
-        if user_id.is_empty() {
-            return Ok(TransactionResponse {
-                transaction_hash: "0x0".to_string(),
-                status: "failed".to_string(),
-                function_called: "receive_payment".to_string(),
-                message: Some("User ID cannot be empty".to_string()),
-            });
-        }
+        let token_address = match parse_felt_from_hex(token) {
+            Ok(addr) => addr,
+            Err(_) => {
+                return Ok(create_failed_response(
+                    "receive_payment",
+                    "Invalid token address format",
+                ))
+            }
+        };
 
-        match self
-            .check_token_balance_of_user(token, controller.address)
+        if let Err(msg) = self
+            .verify_sufficient_balance(token, controller.address, amount_felt)
             .await
         {
-            Ok(user_balance) => {
-                let amount_felt = if amount.starts_with("0x") {
-                    Felt::from_hex(amount).map_err(|_| "Invalid hex amount format")?
-                } else {
-                    Felt::from_dec_str(amount).map_err(|_| "Invalid decimal amount format")?
-                };
+            return Ok(create_failed_response("receive_payment", &msg));
+        }
 
-                if user_balance < amount_felt {
-                    println!("Insufficient token balance for user");
-                    return Ok(TransactionResponse {
-                        transaction_hash: "0x0".to_string(),
-                        status: "failed".to_string(),
-                        function_called: "receive_payment".to_string(),
-                        message: Some(
-                            "Insufficient balance, please fund your account and try again"
-                                .to_string(),
-                        ),
-                    });
+        let contract_address =
+            match parse_felt_from_hex(&self.app_state.env.kharon_pay_contract_address) {
+                Ok(addr) => addr,
+                Err(_) => {
+                    return Ok(create_failed_response(
+                        "receive_payment",
+                        "Invalid contract address",
+                    ))
                 }
-            }
-            Err(e) => {
-                println!("Failed to check user balance: {}", e);
-                return Ok(TransactionResponse {
-                    transaction_hash: "0x0".to_string(),
-                    status: "failed".to_string(),
-                    function_called: "receive_payment".to_string(),
-                    message: Some("Failed to check user balance".to_string()),
-                });
-            }
+            };
+
+        self.execute_payment_transaction(
+            controller,
+            token_address,
+            contract_address,
+            amount_felt,
+            reference,
+            user_id,
+        )
+        .await
+    }
+
+    async fn execute_payment_transaction(
+        &self,
+        controller: &Controller,
+        token_address: Felt,
+        contract_address: Felt,
+        amount_felt: Felt,
+        reference: &str,
+        user_id: &str,
+    ) -> Result<TransactionResponse, Box<dyn std::error::Error>> {
+        let (amount_low, amount_high) = serialize_u256_type(amount_felt);
+
+        let approve_call =
+            build_approve_call(token_address, contract_address, amount_low, amount_high);
+        let payment_calldata =
+            build_payment_calldata(token_address, amount_low, amount_high, reference, user_id);
+        let payment_call = build_payment_call(contract_address, payment_calldata);
+
+        let calls = vec![approve_call, payment_call];
+
+        if let Err(msg) = estimate_transaction_gas(controller, calls.clone()).await {
+            return Ok(create_failed_response("receive_payment", &msg));
         }
 
-        let contract_address = Felt::from_hex(&self.app_state.env.kharon_pay_contract_address)
-            .map_err(|_| "Invalid contract address")?;
-
-        let token_address = Felt::from_hex(token).map_err(|_| "Invalid token address format")?;
-
-        // Parse amount as u256 (your contract expects u256)
-        let amount_felt = if amount.starts_with("0x") {
-            Felt::from_hex(amount).map_err(|_| "Invalid hex amount format")?
-        } else {
-            Felt::from_dec_str(amount).map_err(|_| "Invalid decimal amount format")?
-        };
-
-        // Encode strings as ByteArray
-        let reference_bytearray = encode_bytearray(reference);
-        let user_bytearray = encode_bytearray(user_id);
-
-        // Build calldata in correct order
-        let mut calldata = Vec::new();
-        calldata.push(token_address); // ContractAddress
-        calldata.push(amount_felt); // u256 (low part)
-        calldata.push(Felt::ZERO); // u256 (high part - assuming amount fits in felt)
-        calldata.extend(reference_bytearray); // ByteArray
-        calldata.extend(user_bytearray); // ByteArray
-
-        println!("Final calldata: {:?}", calldata);
-        println!("Calldata length: {}", calldata.len());
-
-        let call = Call {
-            to: contract_address,
-            selector: selector!("receive_payment"),
-            calldata,
-        };
-
-        // Estimate gas
-        match controller.estimate_invoke_fee(vec![call.clone()]).await {
-            Ok(fee_estimate) => {
-                println!("Gas estimation successful: {:?}", fee_estimate);
-            }
-            Err(e) => {
-                let detailed_error = get_detailed_error(&e).await;
-                println!("Gas estimation failed: {}", detailed_error);
-                return Ok(TransactionResponse {
-                    transaction_hash: "0x0".to_string(),
-                    status: "failed".to_string(),
-                    function_called: "receive_payment".to_string(),
-                    message: Some(format!("Gas estimation failed: {}", detailed_error)),
-                });
-            }
-        }
-
-        // Execute transaction
-        match controller.execute_v3(vec![call]).send().await {
-            Ok(result) => {
-                println!(
-                    "Transaction sent successfully: {:#x}",
-                    result.transaction_hash
-                );
-
-                // Wait for transaction receipt
-                let receipt_result = controller
-                    .provider()
-                    .get_transaction_receipt(result.transaction_hash)
-                    .await;
-
-                match receipt_result {
-                    Ok(receipt) => {
-                        println!("Transaction receipt: {:?}", receipt);
-
-                        let revert_message;
-                        let (status, status_message) = match &receipt.receipt {
-                            TransactionReceipt::Invoke(invoke_receipt) => {
-                                match invoke_receipt.execution_result.status() {
-                                    TransactionExecutionStatus::Succeeded => {
-                                        ("success", "Payment processed successfully")
-                                    }
-                                    TransactionExecutionStatus::Reverted => {
-                                        let revert_reason = invoke_receipt
-                                            .execution_result
-                                            .revert_reason()
-                                            .unwrap_or("Unknown revert reason");
-                                        revert_message =
-                                            format!("Transaction reverted: {}", revert_reason);
-                                        ("failed", revert_message.as_str())
-                                    }
-                                }
-                            }
-                            _ => ("success", "Transaction completed"),
-                        };
-
-                        Ok(TransactionResponse {
-                            transaction_hash: format!("{:#x}", result.transaction_hash),
-                            status: status.to_string(),
-                            function_called: "receive_payment".to_string(),
-                            message: Some(status_message.to_string()),
-                        })
-                    }
-                    Err(e) => {
-                        let detailed_error = get_detailed_error(&e).await;
-                        println!("Receipt fetch failed: {}", detailed_error);
-                        Ok(TransactionResponse {
-                            transaction_hash: format!("{:#x}", result.transaction_hash),
-                            status: "pending".to_string(),
-                            function_called: "receive_payment".to_string(),
-                            message: Some("Transaction sent but status unknown".to_string()),
-                        })
-                    }
-                }
-            }
-            Err(e) => {
-                let detailed_error = get_detailed_error(&e).await;
-                println!("Transaction execution failed: {}", detailed_error);
-
-                Ok(TransactionResponse {
-                    transaction_hash: "0x0".to_string(),
-                    status: "failed".to_string(),
-                    function_called: "receive_payment".to_string(),
-                    message: Some(format!("Transaction failed: {}", detailed_error)),
-                })
-            }
-        }
+        execute_transaction_with_receipt(controller, calls.clone()).await
     }
 }
