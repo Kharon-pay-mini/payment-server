@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 
+use diesel::{deserialize::FromSqlRow, expression::AsExpression, sql_types::Jsonb};
 use serde::{Deserialize, Serialize};
 
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionOptions {
     pub policies: SessionPolicies,
     pub expires_at: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, AsExpression, FromSqlRow)]
+#[diesel(sql_type = Jsonb)]
 pub struct SessionPolicies {
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,7 +35,7 @@ pub struct ContractMethod {
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SignMessagePolicy {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -44,14 +46,14 @@ pub struct SignMessagePolicy {
    pub domain: StarknetDomain
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StarknetType {
     pub name: String,
     #[serde(rename = "type")]
     pub type_name: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StarknetDomain {
     pub name: String,
     pub version: String,
@@ -120,3 +122,13 @@ pub struct ControllerInfo {
     pub session_options: SessionOptions,
 }
 
+#[derive(Deserialize)]
+pub struct GetControllerRequest {
+    pub user_email: String,
+}
+
+#[derive(Deserialize)]
+pub struct CheckTokenBalanceRequest {
+    pub token: String,
+    pub user_address: String,
+}
