@@ -1,5 +1,10 @@
+use std::collections::HashMap;
+
 use crate::{
-    database::{db::AppError, transaction_db::TransactionImpl, user_db::UserImpl},
+    database::{
+        db::AppError, transaction_db::TransactionImpl, user_db::UserImpl,
+        user_wallet_db::UserWalletImpl,
+    },
     helpers::{
         payment_helpers::{
             create_and_and_store_pending_transactions_to_redis, get_and_confirm_bank_details,
@@ -13,6 +18,17 @@ use crate::{
         model::FlutterwaveWebhookPayload,
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
+    wallets::{
+        cartridge::ControllerService,
+        helper::{
+            check_token_balance, get_controller, get_or_create_controller_from_db,
+            parse_felt_from_hex, validate_payment_inputs,
+        },
+        models::{
+            CheckTokenBalanceRequest, ControllerInfo, CreateSessionRequest, CreateSessionResponse,
+            GetControllerRequest, ReceivePaymentRequest, ReceivePaymentResponse,
+        },
+    },
 };
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 
@@ -21,6 +37,7 @@ use hmac::{Hmac, Mac};
 
 use serde_json::json;
 use sha2::Sha256;
+use starknet::accounts::Account;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -79,7 +96,7 @@ async fn update_transaction_handler(
     let tx_hash = body.tx_hash.to_string();
     let reference = body.reference.to_string();
 
-    match data.db.get_user_by_id(user_id) {
+    match data.db.get_user_by_id(user_id.as_str()) {
         Ok(_) => {
             let new_tx = NewTransaction {
                 user_id: user_id.clone(),
@@ -138,9 +155,9 @@ async fn get_transaction_handler(
     _: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let ext = req.extensions();
-    let user_id = ext.get::<uuid::Uuid>().unwrap();
+    let user_id = ext.get::<String>().unwrap();
 
-    let transactions = match data.db.get_transaction_by_user_id(*user_id) {
+    let transactions = match data.db.get_transaction_by_user_id(*&user_id.as_str()) {
         Ok(tx) => tx,
         Err(AppError::DieselError(diesel::result::Error::NotFound)) => {
             return HttpResponse::NotFound().json("User not found")
@@ -245,7 +262,11 @@ pub async fn init_offramp_transaction(
     auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
-    let reference = format!("{}-{}", Uuid::new_v4().to_string(), Utc::now().timestamp());
+    let reference = format!(
+        "{}{}",
+        Uuid::new_v4().simple().to_string(),
+        Utc::now().timestamp()
+    );
     let hmac_secret = &app_state.env.hmac_secret;
     let mut mac =
         HmacSha256::new_from_slice(hmac_secret.as_bytes()).expect("HMAC can take key of any size");
@@ -271,7 +292,7 @@ pub async fn init_offramp_transaction(
 
     let bank_details = match get_and_confirm_bank_details(
         &app_state.db,
-        user_id,
+        &user_id.as_str(),
         request.bank_account_id,
         reference.clone(),
     ) {
@@ -354,20 +375,25 @@ pub async fn confirm_disburse_payment_handler(
         Err(e) => return e,
     };
 
-    let pending_disbursement =
-        match retrieve_pending_disbursement(&app_state, &request.reference, user_id).await {
-            Ok(disbursement) => disbursement,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(PaymentResult {
-                    success: false,
-                    reference: request.reference.clone(),
-                    transaction_ref: None,
-                    status: None,
-                    message: "Failed to retrieve pending disbursement".to_string(),
-                    error: Some(e),
-                });
-            }
-        };
+    let pending_disbursement = match retrieve_pending_disbursement(
+        &app_state,
+        &request.reference,
+        &user_id.as_str(),
+    )
+    .await
+    {
+        Ok(disbursement) => disbursement,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PaymentResult {
+                success: false,
+                reference: request.reference.clone(),
+                transaction_ref: None,
+                status: None,
+                message: "Failed to retrieve pending disbursement".to_string(),
+                error: Some(e),
+            });
+        }
+    };
 
     let crypto_amount = match validate_amount_match(
         &request.amount,
@@ -554,4 +580,420 @@ async fn check_health(_data: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(json_response)
 }
 
+#[post("/wallet/controller/create-session")]
+pub async fn create_session_handler(
+    app_state: web::Data<AppState>,
+    body: web::Json<CreateSessionRequest>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    let user = match app_state.db.get_user_by_id(user_id.as_str()) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "success": "false",
+                "message": "User not found",
+                "error": "User not found in database"
+            }));
+        }
+    };
+
+    if user.email != body.user_email {
+        return HttpResponse::BadRequest().json(json!({
+            "success": "false",
+            "message": "User email does not match",
+            "error": "Provided email does not match authenticated user"
+        }));
+    }
+
+    let controller_service = ControllerService::new(app_state.clone());
+
+    if let Err(e) = app_state.db.clear_controller_session(&user_id) {
+        log::warn!("Failed to clear existing session: {:?}", e);
+        // Continue anyway - might not have had a session
+    }
+
+    match controller_service.create_controller(&body.user_email).await {
+        Ok((controller, username, session_options)) => {
+            let controller_address = format!("{:#x}", controller.address());
+            let session_id = Uuid::new_v4().to_string();
+
+            let response = CreateSessionResponse {
+                controller_address,
+                username,
+                session_id,
+                session_options,
+            };
+
+            HttpResponse::Created().json(json!({
+                "success": "true",
+                "message": "Controller session created successfully",
+                "data": response
+            }))
+        }
+        Err(e) => {
+            eprintln!("Failed to create controller session: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "success": "false",
+                "message": "Failed to create controller session",
+                "error": format!("Error creating controller session: {}", e)
+            }))
+        }
+    }
+}
+
+/*
+#[get("/wallet/controller/session")]
+pub async fn get_session_handler(
+    app_state: web::Data<AppState>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    let user = match app_state.db.get_user_by_id(user_id.as_str()) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "success": "false",
+                "message": "User not found",
+                "error": "User not found in database"
+            }));
+        }
+    };
+
+    let controller_service = ControllerService::new(app_state.clone());
+
+    // Use email from authenticated user
+    let (user_data, user_permissions) =
+        match controller_service.validate_user_and_get_permissions(&user.email) {
+            Ok(result) => result,
+            Err(e) => {
+                return HttpResponse::BadRequest().json(json!({
+                    "success": "false",
+                    "message": "Failed to validate user",
+                    "error": format!("User validation error: {}", e)
+                }));
+            }
+        };
+
+    match get_or_create_controller_from_db(
+        &app_state.db,
+        &controller_service,
+        &user_data.id,
+        &user_permissions,
+    )
+    .await
+    {
+        Ok((controller, username, session_options)) => {
+            let controller_address = format!("{:#x}", controller.address());
+            let session_id = Uuid::new_v4().to_string();
+
+            let response = CreateSessionResponse {
+                controller_address,
+                username,
+                session_id,
+                session_options,
+            };
+
+            HttpResponse::Ok().json(json!({
+                "success": "true",
+                "message": "Controller session retrieved successfully",
+                "data": response
+            }))
+        }
+        Err(e) => HttpResponse::NotFound().json(json!({
+            "success": "false",
+            "message": "No valid session found",
+            "error": format!("No existing session: {}", e)
+        })),
+    }
+}   */
+
+#[post("/wallet/controller/receive-payment")]
+pub async fn receive_payment_handler(
+    app_state: web::Data<AppState>,
+    body: web::Json<ReceivePaymentRequest>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
+
+    let controller_service = ControllerService::new(app_state.clone());
+
+    let (user, user_permissions) =
+        match controller_service.validate_user_and_get_permissions(&body.user_email) {
+            Ok(result) => result,
+            Err(e) => {
+                return HttpResponse::BadRequest().json(ReceivePaymentResponse {
+                    success: false,
+                    message: "User validation failed".to_string(),
+                    data: None,
+                    error: Some(format!("Error validating user: {}", e)),
+                });
+            }
+        };
+
+    if user.id != user_id {
+        return HttpResponse::Forbidden().json(ReceivePaymentResponse {
+            success: false,
+            message: "Authentication mismatch".to_string(),
+            data: None,
+            error: Some("Cannot make payment requests for other users".to_string()),
+        });
+    }
+
+    let pending_disbursement =
+        match retrieve_pending_disbursement(&app_state, &body.reference, &user_id.as_str()).await {
+            Ok(disbursement) => disbursement,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(PaymentResult {
+                    success: false,
+                    reference: body.reference.clone(),
+                    transaction_ref: None,
+                    status: None,
+                    message: "Failed to retrieve pending disbursement".to_string(),
+                    error: Some(e),
+                });
+            }
+        };
+
+    match validate_amount_match(
+        &body.amount,
+        pending_disbursement.crypto_amount as i64,
+        body.reference.clone(),
+    ) {
+        Ok(amount) => amount,
+        Err(error) => return error,
+    };
+
+    let (controller, _controller_info) = match get_controller(
+        &app_state.db,
+        &controller_service,
+        &user_id,
+        &body.user_email,
+    )
+    .await
+    {
+        Ok((controller, detail)) => (controller, detail),
+        Err(e) => {
+            return HttpResponse::NotFound().json(ReceivePaymentResponse {
+                success: false,
+                message: "Controller session not found".to_string(),
+                data: None,
+                error: Some(format!("No active controller session for this user: {}", e)),
+            });
+        }
+    };
+
+    log::info!(
+        "Processing receive_payment for user: {} (ID: {})",
+        body.user_email,
+        user_id
+    );
+
+    match controller_service
+        .receive_payment(
+            &controller,
+            &body.token,
+            &body.amount,
+            &body.reference,
+            &user_id.to_string(),
+            &user_permissions,
+        )
+        .await
+    {
+        Ok(transaction_response) => {
+            if transaction_response.status == "success" {
+                HttpResponse::Ok().json(ReceivePaymentResponse {
+                    success: true,
+                    message: "Payment received successfully".to_string(),
+                    data: Some(transaction_response),
+                    error: None,
+                })
+            } else {
+                let message = transaction_response
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "payment failed".to_string());
+                HttpResponse::BadRequest().json(ReceivePaymentResponse {
+                    success: false,
+                    message,
+                    data: Some(transaction_response),
+                    error: None,
+                })
+            }
+        }
+        Err(e) => {
+            log::error!(
+                "Payment processing failed for user {}: {}",
+                body.user_email,
+                e
+            );
+
+            HttpResponse::InternalServerError().json(ReceivePaymentResponse {
+                success: false,
+                message: "Failed to process payment".to_string(),
+                data: None,
+                error: Some(format!("Error: {}", e)),
+            })
+        }
+    }
+}
+
+#[get("/wallet/controller/get-balance")]
+pub async fn get_controller_balance_handler(
+    app_state: web::Data<AppState>,
+    query: web::Query<CheckTokenBalanceRequest>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
+
+    let token = match parse_felt_from_hex(&query.token) {
+        Ok(token) => token,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(json!({
+                "success": "false",
+                "message": "Invalid token address format",
+                "error": format!("Error parsing token address: {}", e)
+            }));
+        }
+    };
+
+    let user_address = match parse_felt_from_hex(&query.user_address) {
+        Ok(address) => address,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(json!({
+                "success": "false",
+                "message": "Invalid user address format",
+                "error": format!("Error parsing user address: {}", e)
+            }));
+        }
+    };
+
+    match check_token_balance(token, user_address).await {
+        Ok(balance) => HttpResponse::Ok().json(json!({
+            "success": "true",
+            "message": "Token balance retrieved successfully",
+            "data": {
+                "balance": format!("{}", balance),
+                "token": query.token,
+                "user_address": query.user_address
+            }
+        })),
+        Err(e) => {
+            log::error!(
+                "Failed to check token balance for address {}: {}",
+                query.user_address,
+                e
+            );
+            HttpResponse::BadRequest().json(json!({
+                "success": "false",
+                "message": "Failed to check token balance",
+                "error": format!("Error: {}", e)
+            }))
+        }
+    }
+}
+
+#[get("/wallet/controller/get-controller")]
+pub async fn get_controller_handler(
+    app_state: web::Data<AppState>,
+    query: web::Query<GetControllerRequest>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
+
+    let user = match app_state.db.get_user_by_id(&user_id) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "success": "false",
+                "message": "User not found",
+                "error": "User not found in database"
+            }));
+        }
+    };
+
+    if user.email != query.user_email {
+        return HttpResponse::BadRequest().json(json!({
+            "success": "false",
+            "message": "User email does not match",
+            "error": "Provided email does not match authenticated user"
+        }));
+    }
+
+    let controller_service = ControllerService::new(app_state.clone());
+
+    match get_controller(
+        &app_state.db,
+        &controller_service,
+        &user_id,
+        &query.user_email,
+    )
+    .await
+    {
+        Ok((_controller, controller_info)) => HttpResponse::Ok().json(json!({
+            "success": "true",
+            "message": "Controller retrieved successfully",
+            "data": {
+                "controller_address": controller_info.controller_address,
+                "username": controller_info.username,
+                "session_policies": controller_info.session_policies,
+                "session_expires_at": controller_info.session_expires_at,
+                "user_permissions": controller_info.user_permissions,
+                "is_deployed": controller_info.is_deployed,
+            }
+        })),
+        Err(e) => {
+            log::error!(
+                "Failed to get controller for user {}: {}",
+                query.user_email,
+                e
+            );
+            HttpResponse::InternalServerError().json(json!({
+                "success": "false",
+                "message": "Failed to retrieve controller",
+                "error": format!("Error: {}", e)
+            }))
+        }
+    }
+}
+
 // TODO: HANDLE FAILED AND REVERSED TRANSACTIONS
+// TODO: CHECK REFERENCES FOR IDEMPOTENCY

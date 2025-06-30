@@ -48,7 +48,8 @@ pub async fn security_logger_middleware(
                 let mut flagged_for_review = false;
 
                 if is_login_failure {
-                    let failures = db.get_user_total_failed_logins(user_id.unwrap());
+                    let user_id_ref = user_id.clone().expect("user ID not found");
+                    let failures = db.get_user_total_failed_logins(user_id_ref);
 
                     if let Ok(recent_failures) = failures {
                         if recent_failures + failed_login_attempts >= 3 {
@@ -82,7 +83,7 @@ pub async fn security_logger_middleware(
 fn extract_user_id_from_jwt(
     req: &ServiceRequest,
     app_state: Option<&web::Data<AppState>>,
-) -> Option<uuid::Uuid> {
+) -> Option<String> {
     let token = req
         .cookie("token")
         .map(|c| c.value().to_string())
@@ -99,9 +100,7 @@ fn extract_user_id_from_jwt(
             &jsonwebtoken::Validation::default(),
         ) {
             Ok(data) => {
-                if let Ok(user_id) = uuid::Uuid::parse_str(&data.claims.sub) {
-                    return Some(user_id);
-                }
+                return Some(data.claims.sub.clone());
             }
             Err(_) => return None,
         }

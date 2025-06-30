@@ -19,7 +19,7 @@ pub trait OtpImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_otp_by_user_id(&self, find_user: uuid::Uuid) -> Result<Otp, AppError> {
+    fn get_otp_by_user_id(&self, find_user: &str) -> Result<Otp, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         otp.filter(user_id.eq(find_user))

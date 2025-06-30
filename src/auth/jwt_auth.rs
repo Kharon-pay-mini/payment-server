@@ -22,7 +22,7 @@ impl fmt::Display for ErrorResponse {
 }
 
 pub struct JwtMiddleware {
-    pub user_id: uuid::Uuid,
+    pub user_id: String,
 }
 
 impl FromRequest for JwtMiddleware {
@@ -64,9 +64,11 @@ impl FromRequest for JwtMiddleware {
             }
         };
 
-        let user_id = uuid::Uuid::parse_str(claims.sub.as_str()).unwrap();
-        req.extensions_mut().insert::<uuid::Uuid>(user_id);
+        let user_id = claims.sub;
+        req.extensions_mut().insert(user_id.clone());
 
-        ready(Ok(JwtMiddleware { user_id }))
+        ready(Ok(JwtMiddleware {
+            user_id: user_id.clone(),
+        }))
     }
 }
