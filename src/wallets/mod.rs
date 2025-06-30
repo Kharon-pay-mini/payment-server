@@ -1,3 +1,3 @@
 pub mod cartridge;
-pub mod models;
 pub mod helper;
+pub mod models;

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use diesel::{deserialize::FromSqlRow, expression::AsExpression, sql_types::Jsonb};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionOptions {
     pub policies: SessionPolicies,
@@ -15,7 +14,7 @@ pub struct SessionOptions {
 pub struct SessionPolicies {
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages: Option<Vec<SignMessagePolicy>>
+    pub messages: Option<Vec<SignMessagePolicy>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -24,7 +23,7 @@ pub struct ContractPolicy {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub methods: Vec<ContractMethod>
+    pub methods: Vec<ContractMethod>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -42,8 +41,8 @@ pub struct SignMessagePolicy {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub types: HashMap<String, Vec<StarknetType>>,
-   pub primary_type: String,
-   pub domain: StarknetDomain
+    pub primary_type: String,
+    pub domain: StarknetDomain,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -94,7 +93,7 @@ pub struct ReceivePaymentResponse {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WithdrawRequest {
-     pub controller_address: String,
+    pub controller_address: String,
     pub token: String,
     pub receiver: String,
     pub amount: String,
