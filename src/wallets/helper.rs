@@ -461,10 +461,10 @@ pub async fn get_or_create_controller_from_db(
     }
 
     // Recreate controller from stored info
-    let controller = recreate_controller_from_info(controller_service, &controller_details).await?;
+    let controller = recreate_controller_from_info(controller_service, &controller_details, user_permissions).await?;
 
     let response_session_policies = controller_service
-        .generate_session_policies(user_permissions.clone())
+        .generate_session_policies(user_permissions)
         .await;
 
     let session_options = SessionOptions {
@@ -478,6 +478,7 @@ pub async fn get_or_create_controller_from_db(
 async fn recreate_controller_from_info(
     controller_service: &ControllerService,
     details: &ControllerSessionInfo,
+    current_user_permissions: &[String],
 ) -> Result<Controller, Box<dyn std::error::Error>> {
     let starknet_rpc_url = env::var("STARKNET_RPC_URL")?;
     let app_id = env::var("APP_ID")?;
@@ -496,24 +497,28 @@ async fn recreate_controller_from_info(
         CHAIN_ID.clone(),
     );
 
-    let policies = &details.session_policies.0;
+    let stored_policies = &details.session_policies.0;
 
-    log::debug!("Using stored policies for session lookup: {:?}", policies);
+    log::debug!(
+        "Using stored policies for session lookup: {:?}",
+        stored_policies
+    );
+    log::debug!("Stored user permissions: {:?}", details.user_permissions);
+    log::debug!("Current user permissions: {:?}", current_user_permissions);
 
-    match controller.session_account(&policies) {
-        Some(_session_account) => {
-            log::info!("Restored existing session for controller");
-        }
-        None => {
-            log::info!("Session not found, creating new session");
-            controller
-                .create_session(
-                    policies.clone(),
-                    (30 * 24 * 60 * 60 + Utc::now().timestamp()) as u64,
-                )
-                .await?;
-        }
+    if details.user_permissions != current_user_permissions {
+        log::warn!("User permissions have changed since session creation");
+        return Err("User permissions have changed, need new session".into());
     }
+
+    // Session is valid (timestamp already checked), create session with stored policies
+    log::info!("Creating session with stored policies and expiration time");
+
+    controller
+        .create_session(stored_policies.clone(), details.session_expires_at as u64)
+        .await?;
+
+    log::info!("Successfully restored session for controller");
 
     Ok(controller)
 }

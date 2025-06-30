@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    database::{db::AppError, transaction_db::TransactionImpl, user_db::UserImpl},
+    database::{
+        db::AppError, transaction_db::TransactionImpl, user_db::UserImpl,
+        user_wallet_db::UserWalletImpl,
+    },
     helpers::{
         payment_helpers::{
             create_and_and_store_pending_transactions_to_redis, get_and_confirm_bank_details,
@@ -18,7 +21,8 @@ use crate::{
     wallets::{
         cartridge::ControllerService,
         helper::{
-            check_token_balance, get_controller, parse_felt_from_hex, validate_payment_inputs,
+            check_token_balance, get_controller, get_or_create_controller_from_db,
+            parse_felt_from_hex, validate_payment_inputs,
         },
         models::{
             CheckTokenBalanceRequest, ControllerInfo, CreateSessionRequest, CreateSessionResponse,
@@ -576,12 +580,6 @@ async fn check_health(_data: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(json_response)
 }
 
-// FOR TEST PURPOSES ONLY
-lazy_static::lazy_static! {
-    static ref USER_CONTROLLERS: std::sync::Mutex<HashMap<String, (account_sdk::controller::Controller, ControllerInfo)>> =
-        std::sync::Mutex::new(HashMap::new());
-}
-
 #[post("/wallet/controller/create-session")]
 pub async fn create_session_handler(
     app_state: web::Data<AppState>,
@@ -611,22 +609,15 @@ pub async fn create_session_handler(
 
     let controller_service = ControllerService::new(app_state.clone());
 
+    if let Err(e) = app_state.db.clear_controller_session(&user_id) {
+        log::warn!("Failed to clear existing session: {:?}", e);
+        // Continue anyway - might not have had a session
+    }
+
     match controller_service.create_controller(&body.user_email).await {
         Ok((controller, username, session_options)) => {
             let controller_address = format!("{:#x}", controller.address());
             let session_id = Uuid::new_v4().to_string();
-
-            let controller_info = ControllerInfo {
-                controller_address: controller_address.clone(),
-                username: username.clone(),
-                session_options: session_options.clone(),
-            };
-
-            // Store the controller info in the global map for later use
-            {
-                let mut controllers = USER_CONTROLLERS.lock().unwrap();
-                controllers.insert(user_id.to_string(), (controller, controller_info.clone()));
-            }
 
             let response = CreateSessionResponse {
                 controller_address,
@@ -652,6 +643,73 @@ pub async fn create_session_handler(
     }
 }
 
+/* 
+#[get("/wallet/controller/session")]
+pub async fn get_session_handler(
+    app_state: web::Data<AppState>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let user_id = auth.user_id;
+
+    let user = match app_state.db.get_user_by_id(user_id.as_str()) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({
+                "success": "false",
+                "message": "User not found",
+                "error": "User not found in database"
+            }));
+        }
+    };
+
+    let controller_service = ControllerService::new(app_state.clone());
+
+    // Use email from authenticated user
+    let (user_data, user_permissions) =
+        match controller_service.validate_user_and_get_permissions(&user.email) {
+            Ok(result) => result,
+            Err(e) => {
+                return HttpResponse::BadRequest().json(json!({
+                    "success": "false",
+                    "message": "Failed to validate user",
+                    "error": format!("User validation error: {}", e)
+                }));
+            }
+        };
+
+    match get_or_create_controller_from_db(
+        &app_state.db,
+        &controller_service,
+        &user_data.id,
+        &user_permissions,
+    )
+    .await
+    {
+        Ok((controller, username, session_options)) => {
+            let controller_address = format!("{:#x}", controller.address());
+            let session_id = Uuid::new_v4().to_string();
+
+            let response = CreateSessionResponse {
+                controller_address,
+                username,
+                session_id,
+                session_options,
+            };
+
+            HttpResponse::Ok().json(json!({
+                "success": "true",
+                "message": "Controller session retrieved successfully",
+                "data": response
+            }))
+        }
+        Err(e) => HttpResponse::NotFound().json(json!({
+            "success": "false",
+            "message": "No valid session found",
+            "error": format!("No existing session: {}", e)
+        })),
+    }
+}   */
+
 #[post("/wallet/controller/receive-payment")]
 pub async fn receive_payment_handler(
     app_state: web::Data<AppState>,
@@ -659,6 +717,18 @@ pub async fn receive_payment_handler(
     auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
+
+     if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
 
     let controller_service = ControllerService::new(app_state.clone());
 
@@ -782,12 +852,27 @@ pub async fn receive_payment_handler(
     }
 }
 
-#[get("/wallet/me/controller/get-balance")]
-pub async fn get_user_controller_balance(
-    body: web::Json<CheckTokenBalanceRequest>,
-    _: jwt_auth::JwtMiddleware,
+#[get("/wallet/controller/get-balance")]
+pub async fn get_controller_balance_handler(
+    app_state: web::Data<AppState>,
+    query: web::Query<CheckTokenBalanceRequest>,
+    auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
-    let token = match parse_felt_from_hex(&body.token) {
+    let user_id = auth.user_id;
+
+    if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
+
+    let token = match parse_felt_from_hex(&query.token) {
         Ok(token) => token,
         Err(e) => {
             return HttpResponse::BadRequest().json(json!({
@@ -798,7 +883,7 @@ pub async fn get_user_controller_balance(
         }
     };
 
-    let user_address = match parse_felt_from_hex(&body.user_address) {
+    let user_address = match parse_felt_from_hex(&query.user_address) {
         Ok(address) => address,
         Err(e) => {
             return HttpResponse::BadRequest().json(json!({
@@ -815,14 +900,14 @@ pub async fn get_user_controller_balance(
             "message": "Token balance retrieved successfully",
             "data": {
                 "balance": format!("{}", balance),
-                "token": body.token,
-                "user_address": body.user_address
+                "token": query.token,
+                "user_address": query.user_address
             }
         })),
         Err(e) => {
             log::error!(
                 "Failed to check token balance for address {}: {}",
-                body.user_address,
+                query.user_address,
                 e
             );
             HttpResponse::BadRequest().json(json!({
@@ -841,6 +926,18 @@ pub async fn get_controller_handler(
     auth: jwt_auth::JwtMiddleware,
 ) -> impl Responder {
     let user_id = auth.user_id;
+
+     if !app_state
+        .db
+        .is_controller_session_valid(&user_id)
+        .unwrap_or(false)
+    {
+        return HttpResponse::Unauthorized().json(json!({
+            "success": "false",
+            "message": "Controller session expired or invalid",
+            "error": "Please create a new controller session"
+        }));
+    }
 
     let user = match app_state.db.get_user_by_id(&user_id) {
         Ok(user) => user,
