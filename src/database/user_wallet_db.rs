@@ -36,8 +36,24 @@ pub trait UserWalletImpl: DbAccess {
     ) -> Result<UserWallet, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
+        // DEBUG: Log what we're about to store
+        log::debug!("Storing controller session info:");
+        log::debug!("  User ID: {}", controller_detail.user_id);
+        log::debug!(
+            "  Controller Address: {}",
+            controller_detail.controller_address
+        );
+        log::debug!(
+            "  Session Expires At: {}",
+            controller_detail.session_expires_at
+        );
+        log::debug!("  Policies: {:?}", controller_detail.session_policies.0);
+
         let session_data = serde_json::to_string(&controller_detail)
             .map_err(|e| AppError::SerializationError(e.to_string()))?;
+
+        // DEBUG: Log the serialized JSON
+        log::debug!("Serialized session data: {}", session_data);
 
         let update_result = diesel::update(user_wallet.filter(user_id.eq(find_user)))
             .set((
@@ -47,8 +63,12 @@ pub trait UserWalletImpl: DbAccess {
             .get_result(&mut conn);
 
         match update_result {
-            Ok(wallet) => Ok(wallet),
+            Ok(wallet) => {
+                log::debug!("Successfully updated wallet controller info");
+                Ok(wallet)
+            }
             Err(diesel::result::Error::NotFound) => {
+                log::debug!("Wallet not found, creating new one");
                 let new_wallet = NewUserWallet {
                     user_id: find_user.to_string(),
                     wallet_address: Some(controller_detail.controller_address.clone()),
@@ -81,13 +101,22 @@ pub trait UserWalletImpl: DbAccess {
             Some(wallet) => match wallet.controller_info {
                 Some(session_data) => {
                     let controller_session_details: ControllerSessionInfo =
-                        serde_json::from_str(&session_data)
-                            .map_err(|e| AppError::SerializationError(e.to_string()))?;
+                        serde_json::from_str(&session_data).map_err(|e| {
+                            log::error!("Failed to deserialize session data: {}", e);
+                            AppError::SerializationError(e.to_string())
+                        })?;
+
                     Ok(Some(controller_session_details))
                 }
-                None => Ok(None),
+                None => {
+                    log::debug!("No controller info found for user: {}", find_user);
+                    Ok(None)
+                }
             },
-            None => Ok(None),
+            None => {
+                log::debug!("No wallet found for user: {}", find_user);
+                Ok(None)
+            }
         }
     }
 
