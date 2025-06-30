@@ -20,10 +20,7 @@ pub trait TransactionImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_transaction_by_user_id(
-        &self,
-        find_user: &str,
-    ) -> Result<Vec<Transaction>, AppError> {
+    fn get_transaction_by_user_id(&self, find_user: &str) -> Result<Vec<Transaction>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         transactions
@@ -32,11 +29,7 @@ pub trait TransactionImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn update_transaction(
-        &self,
-        user_id_val: &str,
-        status: String,
-    ) -> Result<usize, AppError> {
+    fn update_transaction(&self, user_id_val: &str, status: String) -> Result<usize, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         let updated_rows = diesel::update(transactions.filter(user_id.eq(user_id_val)))

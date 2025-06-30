@@ -67,6 +67,8 @@ impl FromRequest for JwtMiddleware {
         let user_id = claims.sub;
         req.extensions_mut().insert(user_id.clone());
 
-        ready(Ok(JwtMiddleware { user_id: user_id.clone() }))
+        ready(Ok(JwtMiddleware {
+            user_id: user_id.clone(),
+        }))
     }
 }

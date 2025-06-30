@@ -64,7 +64,10 @@ async fn store_login_attempt(
             if let Err(e) = db.create_user_security_log(new_log) {
                 log::error!("Failed to store login attempt: {:?}", e);
             } else {
-                log::info!("Login attempt stored successfully for user: {}", user_id.clone());
+                log::info!(
+                    "Login attempt stored successfully for user: {}",
+                    user_id.clone()
+                );
             }
         }
     });
@@ -73,7 +76,9 @@ async fn store_login_attempt(
 }
 
 pub async fn _log_successful_login(app_state: &AppState, req: &HttpRequest, user_id: &str) {
-    if let Err(e) = store_login_attempt(app_state, req, user_id.to_string().clone(), true, None).await {
+    if let Err(e) =
+        store_login_attempt(app_state, req, user_id.to_string().clone(), true, None).await
+    {
         log::error!("Failed to log successful login: {:?}", e);
     }
 }
@@ -84,7 +89,9 @@ pub async fn _log_failed_login(
     user_id: Uuid,
     reason: Option<String>,
 ) {
-    if let Err(e) = store_login_attempt(app_state, req, user_id.to_string().clone(), false, reason).await {
+    if let Err(e) =
+        store_login_attempt(app_state, req, user_id.to_string().clone(), false, reason).await
+    {
         log::error!("Failed to log failed login: {:?}", e);
     }
 }

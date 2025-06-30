@@ -58,14 +58,14 @@ impl Config {
             .expect("FLUTTERWAVE_CALLBACK_URL must be set");
         let flutterwave_secret_hash =
             std::env::var("FLUTTERWAVE_SECRET_HASH").expect("FLUTTERWAVE_SECRET_HASH must be set");
-        let owner_private_key = std::env::var("OWNER_PRIVATE_KEY")
-            .expect("OWNER_PRIVATE_KEY must be set");
+        let owner_private_key =
+            std::env::var("OWNER_PRIVATE_KEY").expect("OWNER_PRIVATE_KEY must be set");
         let kharon_pay_contract_address = std::env::var("KHARON_PAY_CONTRACT_ADDRESS")
             .expect("KHARON_PAY_CONTRACT_ADDRESS must be set");
-        let kharon_pay_classhash = std::env::var("KHARON_PAY_CLASSHASH")
-            .expect("KHARON_PAY_CLASSHASH must be set");
-        let starknet_rpc_url = std::env::var("STARKNET_RPC_URL")
-            .expect("STARKNET_RPC_URL must be set");
+        let kharon_pay_classhash =
+            std::env::var("KHARON_PAY_CLASSHASH").expect("KHARON_PAY_CLASSHASH must be set");
+        let starknet_rpc_url =
+            std::env::var("STARKNET_RPC_URL").expect("STARKNET_RPC_URL must be set");
         let app_id = std::env::var("APP_ID").expect("APP_ID must be set");
         let owner_address = std::env::var("OWNER_ADDRESS").expect("OWNER_ADDRESS must be set");
 

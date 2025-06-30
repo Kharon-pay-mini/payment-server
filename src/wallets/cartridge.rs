@@ -468,7 +468,6 @@ impl ControllerService {
         }
     }
 
-
     pub async fn create_controller(
         &self,
         user_email: &str,
@@ -522,7 +521,7 @@ impl ControllerService {
         let contract_address = parse_felt_from_hex(&session_policies.contract)?;
         let policies = self.build_session_policies(&user_permissions, contract_address);
 
-        // Set session expiration to 30 days 
+        // Set session expiration to 30 days
         let session_duration_seconds = 30 * 24 * 60 * 60; // 30 days
         let expires_at = (Utc::now().timestamp() + session_duration_seconds) as u64;
 
@@ -562,7 +561,6 @@ impl ControllerService {
 
         Ok((controller, username_str, session_options))
     }
-
 
     fn validate_payment_permission(&self, user_permissions: &[String]) -> Result<(), String> {
         if !user_permissions.contains(&"receive_payment".to_string()) {

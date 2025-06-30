@@ -19,10 +19,7 @@ pub trait UserBankImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn _get_banks_by_user_id(
-        &self,
-        find_user: &str,
-    ) -> Result<Vec<UserBankAccount>, AppError> {
+    fn _get_banks_by_user_id(&self, find_user: &str) -> Result<Vec<UserBankAccount>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         user_bank_account

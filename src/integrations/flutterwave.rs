@@ -520,7 +520,7 @@ async fn handle_failed_transfer(
         }
 
         let user_id = parts[2].to_string();
-            
+
         let pending_data: Option<String> = redis_conn
             .get(&key)
             .await

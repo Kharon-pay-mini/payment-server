@@ -643,7 +643,7 @@ pub async fn create_session_handler(
     }
 }
 
-/* 
+/*
 #[get("/wallet/controller/session")]
 pub async fn get_session_handler(
     app_state: web::Data<AppState>,
@@ -718,7 +718,7 @@ pub async fn receive_payment_handler(
 ) -> impl Responder {
     let user_id = auth.user_id;
 
-     if !app_state
+    if !app_state
         .db
         .is_controller_session_valid(&user_id)
         .unwrap_or(false)
@@ -927,7 +927,7 @@ pub async fn get_controller_handler(
 ) -> impl Responder {
     let user_id = auth.user_id;
 
-     if !app_state
+    if !app_state
         .db
         .is_controller_session_valid(&user_id)
         .unwrap_or(false)
@@ -996,3 +996,4 @@ pub async fn get_controller_handler(
 }
 
 // TODO: HANDLE FAILED AND REVERSED TRANSACTIONS
+// TODO: CHECK REFERENCES FOR IDEMPOTENCY

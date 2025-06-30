@@ -461,7 +461,9 @@ pub async fn get_or_create_controller_from_db(
     }
 
     // Recreate controller from stored info
-    let controller = recreate_controller_from_info(controller_service, &controller_details, user_permissions).await?;
+    let controller =
+        recreate_controller_from_info(controller_service, &controller_details, user_permissions)
+            .await?;
 
     let response_session_policies = controller_service
         .generate_session_policies(user_permissions)
