@@ -279,7 +279,7 @@ pub async fn init_offramp_transaction(
         reference
     );
 
-    if request.crypto_transaction.amount <= 0.0 {
+    if request.amount <= 0.0 {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: reference.clone(),
@@ -333,11 +333,7 @@ pub async fn init_offramp_transaction(
                 }
             }
 
-            match get_fiat_amount(
-                &app_state,
-                reference.clone(),
-                request.crypto_transaction.amount as i64,
-            ) {
+            match get_fiat_amount(&app_state, reference.clone(), request.amount as i64) {
                 Ok(fiat_amount) => {
                     // TODO: SEND EMAIL NOTIFICATION TO USER
 
