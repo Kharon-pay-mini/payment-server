@@ -14,7 +14,7 @@ use crate::{
         validation_helpers::validate_amount_match,
     },
     integrations::{
-        flutterwave::{disburse_payment_using_flutterwave, process_flutterwave_webhook},
+        flutterwave::{disburse_payment_using_flutterwave, fetch_banks_via_flutterwave, process_flutterwave_webhook},
         model::FlutterwaveWebhookPayload,
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
@@ -187,7 +187,7 @@ async fn get_transaction_handler(
 
 #[get("/banks")]
 pub async fn fetch_banks_handler(data: web::Data<AppState>) -> impl Responder {
-    match fetch_banks_via_paystack(&data).await {
+    match fetch_banks_via_flutterwave(&data).await {
         Ok(banks) => HttpResponse::Ok().json(json!({
             "status": "success",
             "data": banks
