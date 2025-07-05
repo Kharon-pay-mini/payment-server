@@ -14,7 +14,10 @@ use crate::{
         validation_helpers::validate_amount_match,
     },
     integrations::{
-        flutterwave::{disburse_payment_using_flutterwave, fetch_banks_via_flutterwave, process_flutterwave_webhook},
+        flutterwave::{
+            disburse_payment_using_flutterwave, fetch_banks_via_flutterwave,
+            process_flutterwave_webhook,
+        },
         model::FlutterwaveWebhookPayload,
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
