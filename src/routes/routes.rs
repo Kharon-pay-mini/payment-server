@@ -14,7 +14,10 @@ use crate::{
         validation_helpers::validate_amount_match,
     },
     integrations::{
-        flutterwave::{disburse_payment_using_flutterwave, process_flutterwave_webhook},
+        flutterwave::{
+            disburse_payment_using_flutterwave, fetch_banks_via_flutterwave,
+            process_flutterwave_webhook,
+        },
         model::FlutterwaveWebhookPayload,
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
@@ -187,7 +190,7 @@ async fn get_transaction_handler(
 
 #[get("/banks")]
 pub async fn fetch_banks_handler(data: web::Data<AppState>) -> impl Responder {
-    match fetch_banks_via_paystack(&data).await {
+    match fetch_banks_via_flutterwave(&data).await {
         Ok(banks) => HttpResponse::Ok().json(json!({
             "status": "success",
             "data": banks
@@ -279,7 +282,7 @@ pub async fn init_offramp_transaction(
         reference
     );
 
-    if request.crypto_transaction.amount <= 0.0 {
+    if request.amount <= 0.0 {
         return HttpResponse::BadRequest().json(PaymentResult {
             success: false,
             reference: reference.clone(),
@@ -333,11 +336,7 @@ pub async fn init_offramp_transaction(
                 }
             }
 
-            match get_fiat_amount(
-                &app_state,
-                reference.clone(),
-                request.crypto_transaction.amount as i64,
-            ) {
+            match get_fiat_amount(&app_state, reference.clone(), request.amount as i64) {
                 Ok(fiat_amount) => {
                     // TODO: SEND EMAIL NOTIFICATION TO USER
 

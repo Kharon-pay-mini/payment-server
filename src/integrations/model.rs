@@ -11,12 +11,6 @@ pub struct Bank {
     pub bank_type: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CryptoTransaction {
-    pub amount: f64,
-    pub token_symbol: String,
-}
-
 //  RESPONSES   //
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BankApiResponse<T> {
@@ -183,7 +177,8 @@ pub struct DisbursementSchema {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InitOfframpRequest {
-    pub crypto_transaction: CryptoTransaction,
+    pub amount: f64,
+    pub token_symbol: String,
     pub bank_account_id: Uuid,
     pub currency: String,
     pub order_type: String,

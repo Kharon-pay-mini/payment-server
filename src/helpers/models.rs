@@ -10,7 +10,7 @@ pub struct AuthHeaders {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryableTransfer {
-    pub user_id: Uuid,
+    pub user_id: String,
     pub reference: String,
     pub amount: i64,
     pub narration: Option<String>,
@@ -27,7 +27,7 @@ pub struct RetryableTransfer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferDetails {
-    pub user_id: Uuid,
+    pub user_id: String,
     pub reference: String,
     pub amount: i64,
     pub narration: Option<String>,
