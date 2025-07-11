@@ -13,7 +13,7 @@ diesel::table! {
 diesel::table! {
     session_controller_info (id) {
         id -> Uuid,
-        user_id -> Varchar,
+        user_id -> Text,
         #[max_length = 50]
         username -> Varchar,
         #[max_length = 64]
@@ -30,7 +30,7 @@ diesel::table! {
 diesel::table! {
     transactions (tx_id) {
         tx_id -> Uuid,
-        user_id -> Varchar,
+        user_id -> Text,
         #[max_length = 10]
         order_type -> Varchar,
         crypto_amount -> Numeric,
