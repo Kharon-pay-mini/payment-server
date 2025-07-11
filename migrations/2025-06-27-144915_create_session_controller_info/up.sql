@@ -1,7 +1,7 @@
 -- Your SQL goes here
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE session_controller_info (
+CREATE TABLE IF NOT EXISTS session_controller_info (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     username VARCHAR(50) NOT NULL,
