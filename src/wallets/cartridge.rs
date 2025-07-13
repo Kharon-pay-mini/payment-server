@@ -233,7 +233,7 @@ impl ControllerService {
         }
 
         println!("Funding controller address...");
-        let funding_amount = felt!("1000000000000000000");
+        let funding_amount = felt!("100000000000000000");
         self.fund_controller_address(owner_account, controller_address, funding_amount)
             .await
     }
