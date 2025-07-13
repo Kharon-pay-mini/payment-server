@@ -15,5 +15,5 @@ CREATE TABLE IF NOT EXISTS session_controller_info (
 );
 
 ALTER TABLE session_controller_info
-ADD CONSTRAINT IF NOT EXISTS session_controller_info_user_id_fkey
+ADD CONSTRAINT session_controller_info_user_id_fkey
 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
