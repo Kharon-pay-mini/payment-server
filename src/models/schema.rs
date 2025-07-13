@@ -11,6 +11,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    session_controller_info (id) {
+        id -> Uuid,
+        user_id -> Text,
+        #[max_length = 50]
+        username -> Varchar,
+        #[max_length = 64]
+        controller_address -> Varchar,
+        session_policies -> Jsonb,
+        session_expires_at -> Int8,
+        user_permissions -> Array<Nullable<Text>>,
+        created_at -> Timestamptz,
+        last_used_at -> Timestamptz,
+        is_deployed -> Bool,
+    }
+}
+
+diesel::table! {
     transactions (tx_id) {
         tx_id -> Uuid,
         user_id -> Text,
@@ -54,38 +71,9 @@ diesel::table! {
 }
 
 diesel::table! {
-    user_security_logs (log_id) {
-        log_id -> Uuid,
-        user_id -> Text,
-        #[max_length = 50]
-        ip_address -> Varchar,
-        #[max_length = 50]
-        city -> Varchar,
-        #[max_length = 50]
-        country -> Varchar,
-        failed_login_attempts -> Int4,
-        flagged_for_review -> Bool,
-        created_at -> Nullable<Timestamptz>,
-    }
-}
-
-diesel::table! {
-    user_wallet (id) {
-        id -> Uuid,
-        user_id -> Text,
-        #[max_length = 100]
-        wallet_address -> Nullable<Varchar>,
-        #[max_length = 50]
-        network_used_last -> Nullable<Varchar>,
-        created_at -> Nullable<Timestamptz>,
-        updated_at -> Nullable<Timestamptz>,
-        controller_info -> Nullable<Text>,
-    }
-}
-
-diesel::table! {
     users (id) {
-        id -> Text,
+        #[max_length = 50]
+        id -> Varchar,
         #[max_length = 255]
         email -> Varchar,
         #[max_length = 20]
@@ -99,16 +87,14 @@ diesel::table! {
 }
 
 diesel::joinable!(otp -> users (user_id));
+diesel::joinable!(session_controller_info -> users (user_id));
 diesel::joinable!(transactions -> users (user_id));
 diesel::joinable!(user_bank_account -> users (user_id));
-diesel::joinable!(user_security_logs -> users (user_id));
-diesel::joinable!(user_wallet -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     otp,
+    session_controller_info,
     transactions,
     user_bank_account,
-    user_security_logs,
-    user_wallet,
     users,
 );
