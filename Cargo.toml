@@ -44,7 +44,10 @@ uuid = { version = "1.16.0", features = ["serde", "v4"] }
 r2d2 = "0.8" 
 num-traits = "0.2"
 sqlx = { version = "0.8.6", features = ["runtime-async-std-native-tls", "postgres", "chrono", "uuid", "rust_decimal"] }
-account_sdk = { git = "https://github.com/cartridge-gg/controller-rs.git", package = "account_sdk" }
-starknet = "0.13.0"
+account_sdk = { git = "https://github.com/cartridge-gg/controller-rs.git", package = "account_sdk", tag = "v0.2.1" }
 url = "2.5.4"
 lazy_static = "1.5.0"
+# starknet = "0.16.0"
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs", rev = "ff4222e" }
+
+

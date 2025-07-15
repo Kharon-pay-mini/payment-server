@@ -36,24 +36,8 @@ pub trait UserWalletImpl: DbAccess {
     ) -> Result<UserWallet, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
-        // DEBUG: Log what we're about to store
-        log::debug!("Storing controller session info:");
-        log::debug!("  User ID: {}", controller_detail.user_id);
-        log::debug!(
-            "  Controller Address: {}",
-            controller_detail.controller_address
-        );
-        log::debug!(
-            "  Session Expires At: {}",
-            controller_detail.session_expires_at
-        );
-        log::debug!("  Policies: {:?}", controller_detail.session_policies.0);
-
         let session_data = serde_json::to_string(&controller_detail)
             .map_err(|e| AppError::SerializationError(e.to_string()))?;
-
-        // DEBUG: Log the serialized JSON
-        log::debug!("Serialized session data: {}", session_data);
 
         let update_result = diesel::update(user_wallet.filter(user_id.eq(find_user)))
             .set((

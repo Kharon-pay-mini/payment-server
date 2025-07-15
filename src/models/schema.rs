@@ -14,7 +14,8 @@ diesel::table! {
 diesel::table! {
     session_controller_info (id) {
         id -> Uuid,
-        user_id -> Text,
+        #[max_length = 50]
+        user_id -> Varchar,
         #[max_length = 50]
         username -> Varchar,
         #[max_length = 64]
@@ -31,7 +32,8 @@ diesel::table! {
 diesel::table! {
     transactions (tx_id) {
         tx_id -> Uuid,
-        user_id -> Text,
+        #[max_length = 50]
+        user_id -> Varchar,
         #[max_length = 10]
         order_type -> Varchar,
         crypto_amount -> Numeric,
@@ -99,6 +101,7 @@ diesel::table! {
         wallet_address -> Nullable<Varchar>,
         #[max_length = 50]
         network_used_last -> Nullable<Varchar>,
+        controller_info -> Nullable<Text>,
         created_at -> Nullable<Timestamptz>,
         updated_at -> Nullable<Timestamptz>,
     }
