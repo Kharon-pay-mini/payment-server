@@ -615,7 +615,7 @@ pub async fn create_session_handler(
 
     match controller_service.create_controller(&body.user_email).await {
         Ok((controller, username, session_options)) => {
-            let controller_address = format!("{:#x}", controller.address());
+            let controller_address = format!("{:#x}", controller.address);
             let session_id = Uuid::new_v4().to_string();
 
             let response = CreateSessionResponse {

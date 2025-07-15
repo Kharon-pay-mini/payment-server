@@ -13,14 +13,15 @@ use actix_web::web;
 use chrono::{DateTime, Utc};
 use starknet::{
     accounts::{
-        Account, AccountFactory, AccountFactoryError, ExecutionEncoding, SingleOwnerAccount,
+        Account, AccountFactory, AccountFactoryError, ConnectedAccount, ExecutionEncoding,
+        SingleOwnerAccount,
     },
     core::{
         types::{Call, Felt, StarknetError},
         utils::cairo_short_string_to_felt,
     },
     macros::{felt, selector},
-    providers::ProviderError,
+    providers::{JsonRpcClient, Provider, ProviderError},
     signers::{LocalWallet, SigningKey},
 };
 use tokio::time::sleep;
@@ -192,7 +193,7 @@ impl ControllerService {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
 
-        check_strk_balance(&provider, deployer_address).await?;
+        check_strk_balance(provider.clone(), deployer_address).await?;
 
         if !check_account_deployment_status(&provider, deployer_address).await {
             return Err("Deployer account not deployed".into());
@@ -233,7 +234,7 @@ impl ControllerService {
         }
 
         println!("Funding controller address...");
-        let funding_amount = felt!("1000000000000000000");
+        let funding_amount = felt!("500000000000000000");
         self.fund_controller_address(owner_account, controller_address, funding_amount)
             .await
     }
@@ -307,11 +308,9 @@ impl ControllerService {
                     StarknetError::TransactionExecutionError(ref error_data),
                 )) = e
                 {
-                    if error_data
-                        .execution_error
-                        .contains("is unavailable for deployment")
-                    {
-                        println!("Controller already deployed (detected during deployment), continuing...");
+                    let error_string = format!("{:?}", error_data);
+                    if error_string.contains("Account already deployed") {
+                        println!("Controller already deployed, skipping deployment");
                         return Ok(());
                     }
                 }
@@ -500,6 +499,8 @@ impl ControllerService {
         // Fund controller address if needed - with 1 strk
         self.fund_controller_with_checks(&owner_account, controller_address)
             .await?;
+
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
         // Deploy controller if not already deployed
         self.deploy_controller_with_checks(factory, salt, controller_address)

@@ -23,7 +23,7 @@ use starknet::{
         TransactionReceipt, TransactionReceiptWithBlockInfo,
     },
     macros::{felt, selector},
-    providers::Provider,
+    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
     signers::{LocalWallet, SigningKey},
 };
 use url::Url;
@@ -158,7 +158,7 @@ pub fn validate_payment_inputs(
 }
 
 pub async fn check_strk_balance(
-    provider: &CartridgeJsonRpcProvider,
+    provider: CartridgeJsonRpcProvider,
     address: Felt,
 ) -> Result<Felt, Box<dyn std::error::Error>> {
     let strk_address = felt!("0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d");
@@ -535,13 +535,6 @@ pub async fn store_controller_in_db(
     user_permissions: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Storing controller session for user: {}", user_id);
-    log::debug!(
-        "Session expires_at: {} ({})",
-        session_options.expires_at,
-        DateTime::<Utc>::from_timestamp(session_options.expires_at as i64, 0)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| "Invalid timestamp".to_string())
-    );
 
     // Generate the actual policies that were used for the session
     let contract_address = parse_felt_from_hex(&session_options.policies.contract)?;
@@ -551,7 +544,7 @@ pub async fn store_controller_in_db(
     let controller_details = ControllerSessionInfo {
         user_id: user_id.to_string(),
         username: username.to_string(),
-        controller_address: format!("{:#x}", controller.address()),
+        controller_address: format!("{:#x}", controller.address),
         session_policies: PolicyList(actual_policies), // Store the actual Vec<Policy> used
         session_expires_at: session_options.expires_at as i64,
         user_permissions: user_permissions.to_vec(),
@@ -559,16 +552,6 @@ pub async fn store_controller_in_db(
         last_used_at: Utc::now(),
         is_deployed: true,
     };
-
-    log::debug!("Controller details to store:");
-    log::debug!("  Address: {}", controller_details.controller_address);
-    log::debug!("  Username: {}", controller_details.username);
-    log::debug!("  Expires at: {}", controller_details.session_expires_at);
-    log::debug!("  Created at: {:?}", controller_details.created_at);
-    log::debug!(
-        "  Policies count: {}",
-        controller_details.session_policies.0.len()
-    );
 
     match database.update_wallet_controller_info(user_id, &controller_details) {
         Ok(_) => {
@@ -612,7 +595,7 @@ pub async fn get_controller(
     let details = ControllerSessionInfo {
         user_id: user_id.to_string(),
         username,
-        controller_address: format!("{:#x}", controller.address()),
+        controller_address: format!("{:#x}", controller.address),
         session_policies: PolicyList(build_policies.clone()),
         session_expires_at: session_options.expires_at as i64,
         user_permissions: user_permissions.to_vec(),
