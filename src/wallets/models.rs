@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use account_sdk::provider::CartridgeJsonRpcProvider;
 use diesel::{deserialize::FromSqlRow, expression::AsExpression, sql_types::Jsonb};
 use serde::{Deserialize, Serialize};
 
@@ -131,3 +132,17 @@ pub struct CheckTokenBalanceRequest {
     pub token: String,
     pub user_address: String,
 }
+
+pub struct ProviderWrapper {
+    inner: CartridgeJsonRpcProvider,
+}
+
+impl ProviderWrapper {
+    pub fn new(inner: CartridgeJsonRpcProvider) -> Self {
+        Self { inner }
+    }
+}
+
+// impl Provider for ProviderWrapper {
+
+// }
