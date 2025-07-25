@@ -58,6 +58,36 @@ jobs:
           cargo install diesel_cli --no-default-features --features postgres
           diesel migration run --database-url ${{ secrets.PROD_DATABASE_URL }}
 
+          - name: Log in to GHCR
+          uses: docker/login-action@v3
+          with:
+            registry: ghcr.io
+            username: ${{ github.actor }}
+            password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run smoke test before push
+        run: |
+          docker build -t local-test-image .
+          docker run --rm \
+            --env PORT=8001 \
+            --env DATABASE_URL=postgresql://this_owner:naw_1fytyuyv.eu-west-3.aws.neon.tech/neendb?sslmode=require \
+            --env JWT_SECRET=dummy \
+            --env IP_INFO_TOKEN=dummy \
+            --env FLUTTERWAVE_SECRET_KEY=dummy \
+            --env FLUTTERWAVE_PAYMENT_URL==https://api.flutterwave.com/v3/transfers \
+            --env FLUTTERWAVE_CALLBACK_URL==https://api.flutterwave.com/v3/transfers \
+            --env FLUTTERWAVE_SECRET_HASH=dummy \
+            local-test-image || (echo "❌ Image did not run successfully!" && exit 1)
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.GHCR_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository_url }}
+
       - name: Trigger Render Deploy via API
         id: deploy
         run: |
@@ -96,19 +126,3 @@ jobs:
           name: Release ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ env.GHCR_IMAGE }}
-          labels: |
-            org.opencontainers.image.source=${{ github.repository_url }}

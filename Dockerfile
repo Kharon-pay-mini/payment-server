@@ -54,6 +54,11 @@ RUN if [ -f .env ]; then cp .env /app/.env; else echo ".env file not found, skip
 
 # COPY .env /app/.env
 
+
+# ✅ Sanity check to ensure binary is present
+RUN test -x /usr/local/bin/app || (echo "❌ Binary missing!" && exit 1)
+
+
 USER appuser
 WORKDIR /app
 
@@ -61,4 +66,4 @@ ENV RUST_LOG=info
 
 EXPOSE 8080
 
-CMD ["app"]
+CMD ["/usr/local/bin/app"]
