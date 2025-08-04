@@ -1,2 +1,6 @@
-target/
-.git/
+target
+.git
+Dockerfile
+*.log
+*.sqlite
+*.env
