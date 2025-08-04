@@ -41,9 +41,10 @@ pub struct AppState {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    log::info!("Starting Server......");
+    println!("Initializing environment variables...");
     dotenv().ok();
 
-    log::info!("Starting Server......");
     if std::env::var_os("RUST_LOG").is_none() {
         std::env::set_var("RUST_LOG", "debug, sqlx=warn, actix_web=info, diesel=info");
     }

@@ -19,13 +19,6 @@ RUN cargo install diesel_cli --no-default-features --features postgres --root $C
 
 WORKDIR /app
 
-COPY Cargo.toml ./
-COPY Cargo.lock ./
-
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
-RUN rm -rf src
-
 COPY . .
 
 RUN cargo build --release
@@ -37,12 +30,12 @@ FROM debian:bookworm-slim
 # Install runtime dependencies including CA certificates and SSL
 RUN apt-get update && apt-get install -y \
     libpq5 \
+    libpq-dev \
+    libssl-dev \
     openssl \
     ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m appuser
 
 COPY --from=builder /app/target/release/kharon-server /usr/local/bin/app
 COPY --from=builder /cargo-bin/bin/diesel /usr/local/bin/diesel
@@ -54,16 +47,10 @@ RUN if [ -f .env ]; then cp .env /app/.env; else echo ".env file not found, skip
 
 # COPY .env /app/.env
 
-
-# ✅ Sanity check to ensure binary is present
-RUN test -x /usr/local/bin/app || (echo "❌ Binary missing!" && exit 1)
-
-
-USER appuser
 WORKDIR /app
 
 ENV RUST_LOG=info
 
 EXPOSE 8080
 
-CMD ["/usr/local/bin/app"]
+CMD ["app"]

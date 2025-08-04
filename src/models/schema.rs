@@ -12,6 +12,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    payments (id) {
+        id -> Int4,
+        event_id -> Text,
+        block_number -> Int8,
+        timestamp -> Timestamp,
+        transaction_hash -> Text,
+        sender -> Text,
+        token -> Text,
+        amount -> Text,
+        reference -> Text,
+        status -> Text,
+    }
+}
+
+diesel::table! {
     session_controller_info (id) {
         id -> Uuid,
         #[max_length = 50]
@@ -132,6 +147,7 @@ diesel::joinable!(user_wallet -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     otp,
+    payments,
     session_controller_info,
     transactions,
     user_bank_account,
