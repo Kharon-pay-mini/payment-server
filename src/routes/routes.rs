@@ -1,5 +1,3 @@
-use std::{collections::HashMap, path};
-use num_traits::ToPrimitive;
 use crate::{
     database::{
         db::AppError, transaction_db::TransactionImpl, user_db::UserImpl,
@@ -34,6 +32,8 @@ use crate::{
     },
 };
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
+use num_traits::ToPrimitive;
+use std::{collections::HashMap, path};
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -540,7 +540,6 @@ pub async fn flutterwave_webhook_handler(
     }
 }
 
-
 #[get("/transactions/{reference}/status")]
 pub async fn get_transaction_status_handler(
     app_state: web::Data<AppState>,
@@ -550,7 +549,10 @@ pub async fn get_transaction_status_handler(
     let reference = path.into_inner();
     let user_id = auth.user_id;
 
-    match app_state.db.get_transaction_by_user_and_reference(&user_id, &reference) {
+    match app_state
+        .db
+        .get_transaction_by_user_and_reference(&user_id, &reference)
+    {
         Ok(Some(tx)) => {
             let status_data = TransactionStatus {
                 transaction_id: tx.tx_id.to_string().clone(),
@@ -559,7 +561,7 @@ pub async fn get_transaction_status_handler(
                 amount: Some(tx.fiat_amount.to_f64().unwrap_or(0.0)),
                 currency: Some(tx.fiat_currency.clone()),
                 last_updated: tx.updated_at.unwrap_or_else(|| Utc::now()),
-                metadata: None
+                metadata: None,
             };
 
             HttpResponse::Ok().json(WebhookStatusResponse {
@@ -568,23 +570,18 @@ pub async fn get_transaction_status_handler(
                 message: "Transaction status retrieved successfully".to_string(),
             })
         }
-        Ok(None) => {
-            HttpResponse::NotFound().json(WebhookStatusResponse {
-                success: false,
-                data: None,
-                message: "Transaction not found".to_string(),
-            })
-        }
-        Err(_) => {
-            HttpResponse::InternalServerError().json(WebhookStatusResponse {
-                success: false,
-                data: None,
-                message: "Failed to retrieve transaction status".to_string(),
-            })
-        }
+        Ok(None) => HttpResponse::NotFound().json(WebhookStatusResponse {
+            success: false,
+            data: None,
+            message: "Transaction not found".to_string(),
+        }),
+        Err(_) => HttpResponse::InternalServerError().json(WebhookStatusResponse {
+            success: false,
+            data: None,
+            message: "Failed to retrieve transaction status".to_string(),
+        }),
     }
 }
-
 
 #[get("/rates/usd-ngn-rate")]
 async fn get_usd_ngn_rate_handler(data: web::Data<AppState>) -> impl Responder {

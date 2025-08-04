@@ -29,7 +29,11 @@ pub trait TransactionImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_transaction_by_user_and_reference(&self, find_user: &str, ref_value: &str) -> Result<Option<Transaction>, AppError> {
+    fn get_transaction_by_user_and_reference(
+        &self,
+        find_user: &str,
+        ref_value: &str,
+    ) -> Result<Option<Transaction>, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
 
         transactions

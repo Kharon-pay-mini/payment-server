@@ -288,7 +288,6 @@ pub struct TransactionDetails {
     pub transaction_date: String,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WebhookStatusResponse {
     pub success: bool,
@@ -304,5 +303,5 @@ pub struct TransactionStatus {
     pub amount: Option<f64>,
     pub currency: Option<String>,
     pub last_updated: chrono::DateTime<Utc>,
-    pub metadata: Option<serde_json::Value>
+    pub metadata: Option<serde_json::Value>,
 }
