@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     database::{
         db::AppError, transaction_db::TransactionImpl, user_db::UserImpl,
@@ -18,7 +16,7 @@ use crate::{
             disburse_payment_using_flutterwave, fetch_banks_via_flutterwave,
             process_flutterwave_webhook,
         },
-        model::FlutterwaveWebhookPayload,
+        model::{FlutterwaveWebhookPayload, TransactionStatus, WebhookStatusResponse},
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
     wallets::{
@@ -34,6 +32,8 @@ use crate::{
     },
 };
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
+use num_traits::ToPrimitive;
+use std::{collections::HashMap, path};
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -537,6 +537,49 @@ pub async fn flutterwave_webhook_handler(
             log::error!("Failed to process Flutterwave webhook: {}", e);
             HttpResponse::InternalServerError().body(format!("Error processing webhook: {}", e))
         }
+    }
+}
+
+#[get("/transactions/{reference}/status")]
+pub async fn get_transaction_status_handler(
+    app_state: web::Data<AppState>,
+    path: web::Path<String>,
+    auth: jwt_auth::JwtMiddleware,
+) -> impl Responder {
+    let reference = path.into_inner();
+    let user_id = auth.user_id;
+
+    match app_state
+        .db
+        .get_transaction_by_user_and_reference(&user_id, &reference)
+    {
+        Ok(Some(tx)) => {
+            let status_data = TransactionStatus {
+                transaction_id: tx.tx_id.to_string().clone(),
+                reference: tx.reference.clone(),
+                status: tx.payment_status.clone(),
+                amount: Some(tx.fiat_amount.to_f64().unwrap_or(0.0)),
+                currency: Some(tx.fiat_currency.clone()),
+                last_updated: tx.updated_at.unwrap_or_else(|| Utc::now()),
+                metadata: None,
+            };
+
+            HttpResponse::Ok().json(WebhookStatusResponse {
+                success: true,
+                data: Some(status_data),
+                message: "Transaction status retrieved successfully".to_string(),
+            })
+        }
+        Ok(None) => HttpResponse::NotFound().json(WebhookStatusResponse {
+            success: false,
+            data: None,
+            message: "Transaction not found".to_string(),
+        }),
+        Err(_) => HttpResponse::InternalServerError().json(WebhookStatusResponse {
+            success: false,
+            data: None,
+            message: "Failed to retrieve transaction status".to_string(),
+        }),
     }
 }
 
