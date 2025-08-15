@@ -13,15 +13,14 @@ use actix_web::web;
 use chrono::{DateTime, Utc};
 use starknet::{
     accounts::{
-        Account, AccountFactory, AccountFactoryError, ConnectedAccount, ExecutionEncoding,
-        SingleOwnerAccount,
+        Account, AccountFactory, AccountFactoryError, ExecutionEncoding, SingleOwnerAccount,
     },
     core::{
         types::{Call, Felt, StarknetError},
         utils::cairo_short_string_to_felt,
     },
     macros::{felt, selector},
-    providers::{JsonRpcClient, Provider, ProviderError},
+    providers::ProviderError,
     signers::{LocalWallet, SigningKey},
 };
 use tokio::time::sleep;

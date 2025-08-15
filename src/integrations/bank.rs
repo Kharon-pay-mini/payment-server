@@ -395,7 +395,7 @@ pub async fn handle_successful_disbursement(
                         tx_hash: "0x00".to_string(),
                     };
 
-                    app_state.db.create_transaction(new_tx);
+                    app_state.db.create_transaction(new_tx).unwrap();
                 }
 
                 redis_conn
@@ -472,17 +472,19 @@ pub async fn handle_failed_disbursement(
             })?;
 
             if let Some(data) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data)
+                let _disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state
+                app_state
                     .db
-                    .update_transaction(&user_id, "FAILED".to_string());
+                    .update_transaction(&user_id, "FAILED".to_string())
+                    .unwrap();
 
-                redis_conn
+                /* redis_conn
                     .del::<String, ()>(key)
                     .await
                     .map_err(|e| format!("Failed to delete pending disbursement: {}", e))?;
+                */
 
                 log::info!(
                     "Successfully marked disbursement as failed for user: {}",
@@ -496,7 +498,7 @@ pub async fn handle_failed_disbursement(
             event_data.reference
         );
 
-        app_state.db.update_transaction_status_by_tx_ref(
+        let _ = app_state.db.update_transaction_status_by_tx_ref(
             event_data.transaction_reference.clone(),
             "FAILED".to_string(),
         );
@@ -552,12 +554,13 @@ pub async fn handle_pending_disbursement(
             })?;
 
             if let Some(data) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data)
+                let _disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
                 app_state
                     .db
-                    .update_transaction(&user_id, "PENDING".to_string());
+                    .update_transaction(&user_id, "PENDING".to_string())
+                    .unwrap();
                 log::info!("Updated disbursement as pending for user: {}", user_id);
             }
         }
@@ -567,7 +570,7 @@ pub async fn handle_pending_disbursement(
             event_data.reference
         );
 
-        app_state.db.update_transaction_status_by_tx_ref(
+        let _ = app_state.db.update_transaction_status_by_tx_ref(
             event_data.transaction_reference.clone(),
             "PENDING".to_string(),
         );
@@ -623,12 +626,13 @@ pub async fn handle_processing_disbursement(
             })?;
 
             if let Some(data) = pending_data {
-                let disbursement: PendingDisbursement = serde_json::from_str(&data)
+                let _disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
                 app_state
                     .db
-                    .update_transaction(&user_id, "PROCESSING".to_string());
+                    .update_transaction(&user_id, "PROCESSING".to_string())
+                    .unwrap();
 
                 log::info!("Updated disbursement as processing for user: {}", user_id);
             }
@@ -639,7 +643,7 @@ pub async fn handle_processing_disbursement(
             event_data.reference
         );
 
-        app_state.db.update_transaction_status_by_tx_ref(
+        let _ = app_state.db.update_transaction_status_by_tx_ref(
             event_data.transaction_reference.clone(),
             "PROCESSING".to_string(),
         );

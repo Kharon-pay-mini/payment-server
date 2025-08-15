@@ -5,8 +5,6 @@ use redis::AsyncCommands;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use rust_decimal::Decimal;
 
-use uuid::Uuid;
-
 use crate::{
     database::{db::AppError, transaction_db::TransactionImpl, user_db::UserImpl},
     helpers::payment_helpers::{
@@ -320,7 +318,7 @@ async fn handle_successful_transfer(
                 }
 
                 // Send confirmation email
-                match app_state.db.get_user_by_id(user_id.as_str().clone()) {
+                match app_state.db.get_user_by_id(user_id.as_str()) {
                     Ok(user) => {
                         let usdt_ngn_rate = match pricefeed::get_current_usdt_ngn_rate(
                             app_state.price_feed.clone(),

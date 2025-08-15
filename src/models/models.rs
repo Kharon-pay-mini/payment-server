@@ -6,14 +6,12 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use diesel::{
-    deserialize::{self, FromSql, Result as DeserializeResult},
-    expression::AsExpression,
+    deserialize::{FromSql, Result as DeserializeResult},
     pg::{Pg, PgValue},
-    serialize::{self, IsNull, Output, ToSql},
+    serialize::{IsNull, Output, ToSql},
     sql_types::{Jsonb, Text},
     AsChangeset, Insertable, Queryable,
 };
-use serde_json::Value;
 
 use crate::wallets::models::SessionPolicies;
 
