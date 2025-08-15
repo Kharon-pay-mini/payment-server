@@ -21,26 +21,21 @@ use crate::{
     models::models::{NewTransaction, Transaction, TransactionSchema},
     wallets::{
         cartridge::ControllerService,
-        helper::{
-            check_token_balance, get_controller, get_or_create_controller_from_db,
-            parse_felt_from_hex, validate_payment_inputs,
-        },
+        helper::{check_token_balance, get_controller, parse_felt_from_hex},
         models::{
-            CheckTokenBalanceRequest, ControllerInfo, CreateSessionRequest, CreateSessionResponse,
+            CheckTokenBalanceRequest, CreateSessionRequest, CreateSessionResponse,
             GetControllerRequest, ReceivePaymentRequest, ReceivePaymentResponse,
         },
     },
 };
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use num_traits::ToPrimitive;
-use std::{collections::HashMap, path};
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 
 use serde_json::json;
 use sha2::Sha256;
-use starknet::accounts::Account;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;

@@ -8,14 +8,11 @@ use crate::{
     database::{db::Database, user_wallet_db::UserWalletImpl},
     models::models::{ControllerSessionInfo, PolicyList},
     wallets::cartridge::ControllerService,
-    AppState,
 };
 use account_sdk::{
     artifacts::DEFAULT_CONTROLLER, controller::Controller, provider::CartridgeJsonRpcProvider,
-    signers::Owner,
 };
-use actix_web::web;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use starknet::{
     accounts::{Account, ConnectedAccount},
     core::types::{
@@ -23,8 +20,7 @@ use starknet::{
         TransactionReceipt, TransactionReceiptWithBlockInfo,
     },
     macros::{felt, selector},
-    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
-    signers::{LocalWallet, SigningKey},
+    providers::Provider,
 };
 use url::Url;
 
@@ -215,13 +211,13 @@ pub async fn check_token_balance(
         Ok(balance_result) => {
             let balance = balance_result[0];
             if balance == Felt::ZERO {
-                return Err(format!(
-                    "User account {} has zero balance for token {}. Please fund.",
+                println!(
+                    "User account 0x{:x} has zero balance for token 0x{:x}. Please fund.",
                     user_address, token
-                )
-                .into());
+                );
+            } else {
+                println!("Token balance: {}", balance);
             }
-            println!("Token balance: {}", balance);
             Ok(balance)
         }
         Err(e) => {

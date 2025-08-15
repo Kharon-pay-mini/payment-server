@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use account_sdk::provider::CartridgeJsonRpcProvider;
 use diesel::{deserialize::FromSqlRow, expression::AsExpression, sql_types::Jsonb};
 use serde::{Deserialize, Serialize};
 
@@ -100,11 +99,11 @@ pub struct WithdrawRequest {
     pub amount: String,
 }
 
-#[derive(Deserialize)]
-pub struct SystemManagementRequest {
-    pub controller_address: String,
-    pub user_email: String,
-}
+// #[derive(Deserialize)]
+// pub struct SystemManagementRequest {
+//     pub controller_address: String,
+//     pub user_email: String,
+// }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransactionResponse {
@@ -132,17 +131,3 @@ pub struct CheckTokenBalanceRequest {
     pub token: String,
     pub user_address: String,
 }
-
-pub struct ProviderWrapper {
-    inner: CartridgeJsonRpcProvider,
-}
-
-impl ProviderWrapper {
-    pub fn new(inner: CartridgeJsonRpcProvider) -> Self {
-        Self { inner }
-    }
-}
-
-// impl Provider for ProviderWrapper {
-
-// }
