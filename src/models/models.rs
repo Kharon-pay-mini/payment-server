@@ -10,9 +10,7 @@ use diesel::{
     pg::{Pg, PgValue},
     serialize::{IsNull, Output, ToSql},
     sql_types::{Jsonb, Text},
-    AsChangeset,
-    Insertable,
-    Queryable,
+    AsChangeset, Insertable, Queryable,
 };
 
 use crate::wallets::models::SessionPolicies;
