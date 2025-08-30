@@ -245,10 +245,11 @@ async fn handle_successful_transfer(
                 let stored_hash: Option<String> = redis_conn.get(&tx_hash_key).await.ok();
 
                 // Try to update existing transaction first
-                match app_state
-                    .db
-                    .update_transaction(&user_id, &data.reference, "COMPLETED".to_string())
-                {
+                match app_state.db.update_transaction(
+                    &user_id,
+                    &data.reference,
+                    "COMPLETED".to_string(),
+                ) {
                     Ok(rows_affected) => {
                         if rows_affected == 0 {
                             let new_tx = NewTransaction {
@@ -449,9 +450,11 @@ async fn handle_reversed_transfer(
                 let _disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let _rows_affected = app_state
-                    .db
-                    .update_transaction(&user_id, &data.reference,"REVERSED".to_string());
+                let _rows_affected = app_state.db.update_transaction(
+                    &user_id,
+                    &data.reference,
+                    "REVERSED".to_string(),
+                );
 
                 // ALERT ADMIN
                 // RETRY DISBURSEMENT
@@ -519,24 +522,24 @@ async fn handle_failed_transfer(
                 let stored_hash: Option<String> = redis_conn.get(&tx_hash_key).await.ok();
 
                 // Get exchange rate for proper fiat amount calculation
-                let usdt_ngn_rate: f64 = match pricefeed::get_current_usdt_ngn_rate(
-                    app_state.price_feed.clone(),
-                ) {
-                    Ok(rate) => rate,
-                    Err(e) => {
-                        log::error!("Failed to fetch USDT to NGN rate: {}", e);
-                        return Err("Failed to fetch exchange rate".to_string());
-                    }
-                };
+                let usdt_ngn_rate: f64 =
+                    match pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone()) {
+                        Ok(rate) => rate,
+                        Err(e) => {
+                            log::error!("Failed to fetch USDT to NGN rate: {}", e);
+                            return Err("Failed to fetch exchange rate".to_string());
+                        }
+                    };
 
                 let crypto_amount = disbursement.crypto_amount as f64;
                 let fiat_amount = calculate_fiat_amount(crypto_amount, usdt_ngn_rate);
 
                 // Try to update existing transaction first
-                match app_state
-                    .db
-                    .update_transaction(&user_id, &data.reference,"FAILED".to_string())
-                {
+                match app_state.db.update_transaction(
+                    &user_id,
+                    &data.reference,
+                    "FAILED".to_string(),
+                ) {
                     Ok(rows_affected) => {
                         if rows_affected == 0 {
                             // No existing transaction found, create new one
@@ -630,7 +633,10 @@ async fn handle_failed_transfer(
                     .await
                     .map_err(|e| format!("Failed to delete Redis key: {}", e))?;
 
-                log::info!("Successfully completed failed transfer processing for user: {}", user_id);
+                log::info!(
+                    "Successfully completed failed transfer processing for user: {}",
+                    user_id
+                );
             }
         }
     } else {
@@ -649,11 +655,17 @@ async fn handle_failed_transfer(
                 if rows_affected == 0 {
                     log::warn!("No transaction found for reference: {}", data.id);
                 } else {
-                    log::info!("Successfully updated transaction to FAILED by reference: {}", data.id);
+                    log::info!(
+                        "Successfully updated transaction to FAILED by reference: {}",
+                        data.id
+                    );
                 }
             }
             Err(e) => {
-                log::error!("Failed to update transaction to FAILED by reference: {:?}", e);
+                log::error!(
+                    "Failed to update transaction to FAILED by reference: {:?}",
+                    e
+                );
                 return Err(format!(
                     "Failed to update transaction to FAILED by reference: {:?}",
                     e
@@ -714,9 +726,11 @@ async fn handle_pending_transfer(
                 let _disbursement: PendingDisbursement = serde_json::from_str(&data_str)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let _ = app_state
-                    .db
-                    .update_transaction(&user_id, &data.reference,  "PENDING".to_string());
+                let _ = app_state.db.update_transaction(
+                    &user_id,
+                    &data.reference,
+                    "PENDING".to_string(),
+                );
                 log::info!("Updated transaction to PENDING for user: {}", user_id);
             }
         }

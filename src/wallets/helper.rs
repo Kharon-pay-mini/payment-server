@@ -608,7 +608,7 @@ pub async fn get_controller(
 
 pub fn pad_starknet_address(address: Felt) -> Result<(Felt, String), Box<dyn std::error::Error>> {
     let address_str = format!("{:x}", address);
-    let padded_address_str =  format!("0x{:0>64}", address_str);  // Pad with leading zeros to ensure 64 hex chars
+    let padded_address_str = format!("0x{:0>64}", address_str); // Pad with leading zeros to ensure 64 hex chars
     let padded_address_to_felt = Felt::from_hex(&padded_address_str)?;
     Ok((padded_address_to_felt, padded_address_str))
 }

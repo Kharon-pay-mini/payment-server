@@ -372,9 +372,11 @@ pub async fn handle_successful_disbursement(
                 let disbursement: PendingDisbursement = serde_json::from_str(&data)
                     .map_err(|e| format!("Failed to parse pending disbursement: {}", e))?;
 
-                let rows_affected = app_state
-                    .db
-                    .update_transaction(&user_id, &event_data.reference, "COMPLETED".to_string());
+                let rows_affected = app_state.db.update_transaction(
+                    &user_id,
+                    &event_data.reference,
+                    "COMPLETED".to_string(),
+                );
 
                 if rows_affected.unwrap() == 0 {
                     let new_tx = NewTransaction {
