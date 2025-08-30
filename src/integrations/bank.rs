@@ -374,7 +374,7 @@ pub async fn handle_successful_disbursement(
 
                 let rows_affected = app_state
                     .db
-                    .update_transaction(&user_id, "COMPLETED".to_string());
+                    .update_transaction(&user_id, &event_data.reference, "COMPLETED".to_string());
 
                 if rows_affected.unwrap() == 0 {
                     let new_tx = NewTransaction {
@@ -477,7 +477,7 @@ pub async fn handle_failed_disbursement(
 
                 app_state
                     .db
-                    .update_transaction(&user_id, "FAILED".to_string())
+                    .update_transaction(&user_id, &event_data.reference, "FAILED".to_string())
                     .unwrap();
 
                 /* redis_conn
@@ -559,7 +559,7 @@ pub async fn handle_pending_disbursement(
 
                 app_state
                     .db
-                    .update_transaction(&user_id, "PENDING".to_string())
+                    .update_transaction(&user_id, &event_data.reference, "PENDING".to_string())
                     .unwrap();
                 log::info!("Updated disbursement as pending for user: {}", user_id);
             }
@@ -631,7 +631,7 @@ pub async fn handle_processing_disbursement(
 
                 app_state
                     .db
-                    .update_transaction(&user_id, "PROCESSING".to_string())
+                    .update_transaction(&user_id, &event_data.reference, "PROCESSING".to_string())
                     .unwrap();
 
                 log::info!("Updated disbursement as processing for user: {}", user_id);

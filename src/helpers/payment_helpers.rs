@@ -28,15 +28,15 @@ use serde_json::json;
 
 use uuid::Uuid;
 
-pub fn calculate_fiat_amount(crypto_amount: i64, exchange_rate: i64) -> i64 {
+pub fn calculate_fiat_amount(crypto_amount: f64, exchange_rate: f64) -> f64 {
     crypto_amount * exchange_rate
 }
 
 pub fn create_transaction_record(
     user_id: String,
     pending_disbursement: &PendingDisbursement,
-    crypto_amount: i64,
-    fiat_amount: i64,
+    crypto_amount: f64,
+    fiat_amount: f64,
     payment_status: String,
     reference: String,
     transaction_hash: String,
@@ -47,7 +47,7 @@ pub fn create_transaction_record(
         crypto_amount: Decimal::from_f64(crypto_amount as f64)
             .expect("Invalid crypto amount conversion"),
         crypto_type: pending_disbursement.crypto_symbol.clone(),
-        fiat_amount: Decimal::from_i64(fiat_amount).expect("Invalid fiat amount conversion"),
+        fiat_amount: Decimal::from_f64(fiat_amount).expect("Invalid fiat amount conversion"),
         fiat_currency: pending_disbursement.currency.clone(),
         payment_method: pending_disbursement.payment_method.clone(),
         payment_status,
@@ -62,9 +62,9 @@ pub fn create_transaction_record(
 pub fn create_transaction_details(
     reference: String,
     transaction_ref: String,
-    crypto_amount: i64,
+    crypto_amount: f64,
     crypto_symbol: String,
-    fiat_amount: i64,
+    fiat_amount: f64,
     pending_disbursement: &PendingDisbursement,
     transaction_hash: String,
 ) -> TransactionDetails {
@@ -251,13 +251,13 @@ pub async fn create_and_and_store_pending_transactions_to_redis(
 pub fn get_fiat_amount(
     app_state: &web::Data<AppState>,
     reference: String,
-    amount: i64,
-) -> Result<i64, HttpResponse> {
-    let usdt_ngn_rate: i64 =
+    amount: f64,
+) -> Result<f64, HttpResponse> {
+    let usdt_ngn_rate: f64 =
         match pricefeed::pricefeed::get_current_usdt_ngn_rate(app_state.price_feed.clone()) {
             Ok(rate) => {
                 log::info!("Current USDT to NGN rate: {}", rate);
-                rate as i64
+                rate as f64
             }
             Err(e) => {
                 log::error!("Failed to fetch USDT to NGN rate: {}", e);
@@ -272,7 +272,7 @@ pub fn get_fiat_amount(
             }
         };
 
-    let fiat_amount: i64 = calculate_fiat_amount(amount, usdt_ngn_rate);
+    let fiat_amount: f64 = calculate_fiat_amount(amount, usdt_ngn_rate);
     return Ok(fiat_amount);
 }
 
@@ -380,8 +380,8 @@ pub async fn structure_and_record_initialized_disbursement(
     request: ConfirmDisbursementRequest,
     user_id: String,
     pending_disbursement: PendingDisbursement,
-    crypto_amount: i64,
-    fiat_amount: i64,
+    crypto_amount: f64,
+    fiat_amount: f64,
 ) -> Result<HttpResponse, HttpResponse> {
     let payment_status = disbursement.status.clone();
     let reference = disbursement.reference.clone();

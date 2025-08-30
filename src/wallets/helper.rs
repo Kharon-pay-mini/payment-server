@@ -537,10 +537,12 @@ pub async fn store_controller_in_db(
     let actual_policies =
         controller_service.build_session_policies(user_permissions, contract_address);
 
+    let (_, padded_address_str) = pad_starknet_address(controller.address)?;
+
     let controller_details = ControllerSessionInfo {
         user_id: user_id.to_string(),
         username: username.to_string(),
-        controller_address: format!("{:#x}", controller.address),
+        controller_address: padded_address_str,
         session_policies: PolicyList(actual_policies), // Store the actual Vec<Policy> used
         session_expires_at: session_options.expires_at as i64,
         user_permissions: user_permissions.to_vec(),
@@ -587,11 +589,12 @@ pub async fn get_controller(
     let contract_address = parse_felt_from_hex(&session_options.policies.contract)?;
     let build_policies =
         controller_service.build_session_policies(&user_permissions, contract_address);
+    let (_, padded_address_str) = pad_starknet_address(controller.address)?;
 
     let details = ControllerSessionInfo {
         user_id: user_id.to_string(),
         username,
-        controller_address: format!("{:#x}", controller.address),
+        controller_address: padded_address_str,
         session_policies: PolicyList(build_policies.clone()),
         session_expires_at: session_options.expires_at as i64,
         user_permissions: user_permissions.to_vec(),
@@ -601,4 +604,11 @@ pub async fn get_controller(
     };
 
     Ok((controller, details))
+}
+
+pub fn pad_starknet_address(address: Felt) -> Result<(Felt, String), Box<dyn std::error::Error>> {
+    let address_str = format!("{:x}", address);
+    let padded_address_str =  format!("0x{:0>64}", address_str);  // Pad with leading zeros to ensure 64 hex chars
+    let padded_address_to_felt = Felt::from_hex(&padded_address_str)?;
+    Ok((padded_address_to_felt, padded_address_str))
 }

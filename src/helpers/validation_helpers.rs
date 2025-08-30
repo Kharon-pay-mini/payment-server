@@ -22,10 +22,10 @@ pub fn validate_reference(reference: &str) -> Result<(), String> {
 
 pub fn validate_amount_match(
     request_amount: &str,
-    pending_amount: i64,
+    pending_amount: f64,
     reference: String,
-) -> Result<i64, HttpResponse> {
-    let amount: i64 = match request_amount.parse() {
+) -> Result<f64, HttpResponse> {
+    let amount: f64 = match request_amount.parse() {
         Ok(value) => value,
         Err(_) => {
             log::error!("Invalid amount format: {}", request_amount);

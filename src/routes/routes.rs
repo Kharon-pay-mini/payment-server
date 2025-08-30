@@ -331,7 +331,7 @@ pub async fn init_offramp_transaction(
                 }
             }
 
-            match get_fiat_amount(&app_state, reference.clone(), request.amount as i64) {
+            match get_fiat_amount(&app_state, reference.clone(), request.amount) {
                 Ok(fiat_amount) => {
                     // TODO: SEND EMAIL NOTIFICATION TO USER
 
@@ -391,7 +391,7 @@ pub async fn confirm_disburse_payment_handler(
 
     let crypto_amount = match validate_amount_match(
         &request.amount,
-        pending_disbursement.crypto_amount as i64,
+        pending_disbursement.crypto_amount,
         request.reference.clone(),
     ) {
         Ok(amount) => amount,
@@ -808,7 +808,7 @@ pub async fn receive_payment_handler(
 
     match validate_amount_match(
         &body.amount,
-        pending_disbursement.crypto_amount as i64,
+        pending_disbursement.crypto_amount,
         body.reference.clone(),
     ) {
         Ok(amount) => amount,
