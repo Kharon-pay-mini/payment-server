@@ -82,13 +82,14 @@ pub trait UserWalletImpl: DbAccess {
             .map_err(AppError::DieselError)?;
 
         match wallet {
-            Some(wallet) => match wallet.controller_info {
+            Some(wallet) => match &wallet.controller_info {
                 Some(session_data) => {
                     let controller_session_details: ControllerSessionInfo =
                         serde_json::from_str(&session_data).map_err(|e| {
                             log::error!("Failed to deserialize session data: {}", e);
                             AppError::SerializationError(e.to_string())
                         })?;
+                println!("Controller info for user {}: {:?}", find_user, &wallet.controller_info);
 
                     Ok(Some(controller_session_details))
                 }
@@ -102,6 +103,7 @@ pub trait UserWalletImpl: DbAccess {
                 Ok(None)
             }
         }
+        
     }
 
     fn is_controller_session_valid(&self, find_user: &str) -> Result<bool, AppError> {

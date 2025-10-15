@@ -62,7 +62,7 @@ pub struct StarknetDomain {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateSessionRequest {
-    pub user_email: String,
+    pub phone: String,
     #[serde(default)]
     pub user_permissions: Vec<String>,
 }
@@ -80,7 +80,7 @@ pub struct ReceivePaymentRequest {
     pub token: String,
     pub amount: String,
     pub reference: String,
-    pub user_email: String,
+    pub phone: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -123,11 +123,17 @@ pub struct ControllerInfo {
 
 #[derive(Deserialize)]
 pub struct GetControllerRequest {
-    pub user_email: String,
+    pub phone: String,
 }
 
 #[derive(Deserialize)]
 pub struct CheckTokenBalanceRequest {
+    pub phone: String,
     pub token: String,
     pub user_address: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TransactionStatusQuery {
+    pub phone: String
 }

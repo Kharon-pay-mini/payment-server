@@ -177,6 +177,7 @@ pub struct DisbursementSchema {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InitOfframpRequest {
+    pub phone: String,
     pub amount: f64,
     pub token_symbol: String,
     pub bank_account_id: Uuid,

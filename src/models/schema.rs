@@ -136,10 +136,8 @@ diesel::table! {
     users (id) {
         #[max_length = 50]
         id -> Varchar,
-        #[max_length = 255]
-        email -> Varchar,
         #[max_length = 20]
-        phone -> Nullable<Varchar>,
+        phone -> Varchar,
         last_logged_in -> Nullable<Timestamptz>,
         verified -> Bool,
         #[max_length = 10]
@@ -149,7 +147,6 @@ diesel::table! {
 }
 
 diesel::joinable!(otp -> users (user_id));
-diesel::joinable!(session_controller_info -> users (user_id));
 diesel::joinable!(transactions -> users (user_id));
 diesel::joinable!(user_bank_account -> users (user_id));
 diesel::joinable!(user_jwt_tokens -> users (user_id));

@@ -9,14 +9,6 @@ diesel::define_sql_function! {
 }
 
 pub trait UserImpl: DbAccess {
-    fn get_user_by_email(&self, find_email: String) -> Result<User, AppError> {
-        let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
-        users
-            .filter(lower(email).eq(lower(find_email)))
-            .first::<User>(&mut conn)
-            .map_err(AppError::DieselError)
-    }
-
     fn get_user_by_id(&self, find_id: &str) -> Result<User, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
         users
@@ -25,7 +17,7 @@ pub trait UserImpl: DbAccess {
             .map_err(AppError::DieselError)
     }
 
-    fn get_user_by_phone(&self, find_phone: String) -> Result<User, AppError> {
+    fn get_user_by_phone(&self, find_phone: &String) -> Result<User, AppError> {
         let mut conn = self.conn().map_err(AppError::DbConnectionError)?;
         users
             .filter(phone.eq(find_phone))

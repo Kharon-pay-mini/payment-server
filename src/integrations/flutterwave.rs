@@ -22,7 +22,7 @@ use super::model::{
     FlutterwaveTransferRequest, FlutterwaveWebhookData, FlutterwaveWebhookPayload,
 };
 
-pub async fn disburse_payment_using_flutterwave(
+pub async fn disburse_payment(
     app_state: &web::Data<AppState>,
     reference: &str,
     amount: f64,
@@ -344,16 +344,16 @@ async fn handle_successful_transfer(
                             stored_hash.unwrap_or("0x00".to_string()),
                         );
 
-                        if let Err(e) =
-                            send_confirmation_email(&user.email, transaction_details).await
-                        {
-                            log::error!("Failed to send confirmation email: {}", e);
-                        } else {
-                            log::info!(
-                                "Confirmation email sent successfully to user: {}",
-                                user.email
-                            );
-                        }
+                        // if let Err(e) =
+                        //     send_confirmation_email(&user.email, transaction_details).await
+                        // {
+                        //     log::error!("Failed to send confirmation email: {}", e);
+                        // } else {
+                        //     log::info!(
+                        //         "Confirmation email sent successfully to user: {}",
+                        //         user.email
+                        //     );
+                        // }
                     }
                     Err(e) => {
                         log::error!("Failed to get user for email notification: {:?}", e);

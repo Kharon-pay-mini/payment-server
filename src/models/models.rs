@@ -20,8 +20,7 @@ use crate::wallets::models::SessionPolicies;
 #[diesel(table_name=crate::models::schema::users)]
 pub struct User {
     pub id: String,
-    pub email: String,
-    pub phone: Option<String>,
+    pub phone: String,
     pub last_logged_in: Option<DateTime<Utc>>,
     pub verified: bool,
     pub role: String,
@@ -33,8 +32,7 @@ pub struct User {
 #[derive(Debug, Deserialize, Serialize, Clone, AsChangeset, Insertable)]
 #[diesel(table_name=crate::models::schema::users)]
 pub struct NewUser {
-    pub email: String,
-    pub phone: Option<String>,
+    pub phone: String,
     pub verified: bool,
     pub role: String,
 }

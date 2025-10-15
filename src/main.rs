@@ -3,7 +3,6 @@ mod config;
 mod database;
 mod helpers;
 mod integrations;
-mod middleware;
 mod models;
 mod pricefeed;
 mod routes;
@@ -25,7 +24,6 @@ use config::{
 };
 use database::db::Database;
 use dotenv::dotenv;
-use middleware::security_log::security_logger_middleware;
 use pricefeed::pricefeed::PriceData;
 use service::geolocation::geolocator::GeoLocator;
 
@@ -99,7 +97,6 @@ async fn main() -> std::io::Result<()> {
             .configure(config_scope::config)
             .wrap(cors)
             .wrap(Logger::default())
-            .wrap(from_fn(security_logger_middleware))
     })
     .bind(("0.0.0.0", port))?
     .run()

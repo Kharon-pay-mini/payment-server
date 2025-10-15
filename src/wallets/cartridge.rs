@@ -34,10 +34,9 @@ use crate::{
             build_approve_call, build_payment_call, build_payment_calldata,
             check_account_deployment_status, check_strk_balance, check_token_balance,
             create_failed_response, create_provider_from_url, estimate_transaction_gas,
-            execute_transaction_with_receipt, extract_username_from_email,
+            execute_transaction_with_receipt,
             get_or_create_controller_from_db, parse_felt_from_hex, serialize_u256_type,
-            store_controller_in_db, validate_email_format, validate_payment_inputs,
-            validate_username_length,
+            store_controller_in_db, validate_phone_format, validate_payment_inputs
         },
         models::{
             ContractMethod, SessionOptions, SessionPolicies, SignMessagePolicy, StarknetDomain,
@@ -116,12 +115,12 @@ impl ControllerService {
     // Validate user exists and get their permissions
     pub fn validate_user_and_get_permissions(
         &self,
-        user_email: &str,
+        phone: &str,
     ) -> Result<(User, Vec<String>), Box<dyn std::error::Error>> {
         let user = self
             .app_state
             .db
-            .get_user_by_email(user_email.to_string())
+            .get_user_by_phone(&phone.to_string())
             .map_err(|e| format!("User not found: {:?}", e))?;
 
         let permissions = self.get_user_permissions(&user);
@@ -135,15 +134,11 @@ impl ControllerService {
 
     fn validate_user_input(
         &self,
-        user_email: &str,
+        phone: &str,
         user_permissions: &[String],
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Email validation
-        validate_email_format(user_email)?;
-
-        // Username length validation
-        let username = extract_username_from_email(user_email);
-        validate_username_length(&username)?;
+        validate_phone_format(phone)?;
 
         // Permission validation
         let permission_config = PermissionConfig::new();
@@ -204,17 +199,17 @@ impl ControllerService {
     /// Generate controller factory and compute address
     fn create_controller_factory_and_address(
         &self,
-        username: &str,
+        phone: &str,
         owner: Owner,
         provider: CartridgeJsonRpcProvider,
     ) -> Result<(ControllerFactory, Felt), Box<dyn std::error::Error>> {
         let chain_id = CHAIN_ID.clone();
-        let salt = cairo_short_string_to_felt(username)?;
+        let salt = cairo_short_string_to_felt(phone)?;
 
         let factory = ControllerFactory::new(DEFAULT_CONTROLLER.hash, chain_id, owner, provider);
 
         let address = factory.address(salt);
-        println!("Controller address for {}: {:#x}", username, address);
+        println!("Controller address for {}: {:#x}", phone, address);
 
         Ok((factory, address))
     }
@@ -468,9 +463,9 @@ impl ControllerService {
 
     pub async fn create_controller(
         &self,
-        user_email: &str,
+        phone: &str,
     ) -> Result<(Controller, String, SessionOptions), Box<dyn std::error::Error>> {
-        let (user, user_permissions) = self.validate_user_and_get_permissions(user_email)?;
+        let (user, user_permissions) = self.validate_user_and_get_permissions(phone)?;
         let database = &self.app_state.db;
 
         match get_or_create_controller_from_db(database, &self, &user.id, &user_permissions).await {
@@ -480,8 +475,7 @@ impl ControllerService {
             }
         }
 
-        self.validate_user_input(user_email, &user_permissions)?;
-        let username = extract_username_from_email(user_email);
+        self.validate_user_input(phone, &user_permissions)?;
         let provider = create_provider_from_url(&self.app_state.env.starknet_rpc_url)?;
         let owner_account = self.create_owner_account(provider.clone())?;
 
@@ -491,9 +485,9 @@ impl ControllerService {
 
         // Create factory and compute controller address
         let owner = self.create_owner_from_private_key()?;
-        let salt = cairo_short_string_to_felt(&username)?;
+        let salt = cairo_short_string_to_felt(&phone)?;
         let (factory, controller_address) =
-            self.create_controller_factory_and_address(&username, owner.clone(), provider.clone())?;
+            self.create_controller_factory_and_address(&phone, owner.clone(), provider.clone())?;
 
         // Fund controller address if needed - with 1 strk
         self.fund_controller_with_checks(&owner_account, controller_address)
@@ -509,7 +503,7 @@ impl ControllerService {
         let rpc_url = Url::parse(&self.app_state.env.starknet_rpc_url)?;
         let mut controller = Controller::new(
             self.app_state.env.app_id.clone(),
-            username.to_string(),
+            phone.to_string(),
             DEFAULT_CONTROLLER.hash,
             rpc_url,
             owner.clone(),
@@ -540,7 +534,7 @@ impl ControllerService {
             expires_at,
         };
 
-        let username_str = username.to_string();
+        let username_str = phone.to_string();
 
         // Store in database
         store_controller_in_db(

@@ -111,22 +111,23 @@ pub fn encode_bytearray(input: &str) -> Vec<Felt> {
     result
 }
 
-pub fn extract_username_from_email(email: &str) -> String {
-    email.split("@").next().unwrap_or(email).to_string()
-}
 
-pub fn validate_email_format(email: &str) -> Result<(), String> {
-    if email.is_empty() || !email.contains("@") {
-        return Err("Invalid email format".to_string());
+pub fn validate_phone_format(phone: &str) -> Result<(), String> {
+    if phone.is_empty() {
+        return Err("Phone number cannot be empty".to_string());
     }
 
-    Ok(())
-}
-
-pub fn validate_username_length(username: &str) -> Result<(), String> {
-    if username.is_empty() || username.len() > 31 {
-        return Err("Username must not be greater than 31 character".to_string());
+    if phone.len() > 25 {
+        return Err("Phone number too long (max 25 digits)".to_string());
     }
+
+   if !phone.chars().all(|c| c.is_ascii_digit() || "+-() ".contains(c)) {
+        return Err("Phone number contains invalid characters".to_string());
+   }
+
+   if !phone.chars().any(|c| c.is_ascii_digit()) {
+        return Err("Phone number must contain at least one digit".to_string());
+   }
 
     Ok(())
 }
@@ -568,10 +569,10 @@ pub async fn get_controller(
     database: &Database,
     controller_service: &ControllerService,
     user_id: &str,
-    user_email: &str,
+    phone: &str,
 ) -> Result<(Controller, ControllerSessionInfo), Box<dyn std::error::Error>> {
     let (user, user_permissions) =
-        controller_service.validate_user_and_get_permissions(user_email)?;
+        controller_service.validate_user_and_get_permissions(phone)?;
 
     let (controller, username, session_options) = match get_or_create_controller_from_db(
         &database,
@@ -582,7 +583,7 @@ pub async fn get_controller(
     .await
     {
         Ok((controller, username, session_options)) => (controller, username, session_options),
-        Err(_) => controller_service.create_controller(user_email).await?,
+        Err(_) => controller_service.create_controller(phone).await?,
     };
 
     // Generate the actual policies for storage
