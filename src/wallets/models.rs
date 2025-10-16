@@ -135,5 +135,5 @@ pub struct CheckTokenBalanceRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionStatusQuery {
-    pub phone: String
+    pub phone: String,
 }

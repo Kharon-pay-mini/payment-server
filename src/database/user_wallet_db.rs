@@ -89,7 +89,10 @@ pub trait UserWalletImpl: DbAccess {
                             log::error!("Failed to deserialize session data: {}", e);
                             AppError::SerializationError(e.to_string())
                         })?;
-                println!("Controller info for user {}: {:?}", find_user, &wallet.controller_info);
+                    println!(
+                        "Controller info for user {}: {:?}",
+                        find_user, &wallet.controller_info
+                    );
 
                     Ok(Some(controller_session_details))
                 }
@@ -103,7 +106,6 @@ pub trait UserWalletImpl: DbAccess {
                 Ok(None)
             }
         }
-        
     }
 
     fn is_controller_session_valid(&self, find_user: &str) -> Result<bool, AppError> {

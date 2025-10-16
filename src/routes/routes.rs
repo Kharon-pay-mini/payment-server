@@ -12,10 +12,7 @@ use crate::{
         validation_helpers::validate_amount_match,
     },
     integrations::{
-        flutterwave::{
-            disburse_payment, fetch_banks_via_flutterwave,
-            process_flutterwave_webhook,
-        },
+        flutterwave::{disburse_payment, fetch_banks_via_flutterwave, process_flutterwave_webhook},
         model::{FlutterwaveWebhookPayload, TransactionStatus, WebhookStatusResponse},
     },
     models::models::{NewTransaction, Transaction, TransactionSchema},
@@ -24,7 +21,8 @@ use crate::{
         helper::{check_token_balance, get_controller, pad_starknet_address, parse_felt_from_hex},
         models::{
             CheckTokenBalanceRequest, CreateSessionRequest, CreateSessionResponse,
-            GetControllerRequest, ReceivePaymentRequest, ReceivePaymentResponse, TransactionStatusQuery,
+            GetControllerRequest, ReceivePaymentRequest, ReceivePaymentResponse,
+            TransactionStatusQuery,
         },
     },
 };
@@ -43,8 +41,7 @@ type HmacSha256 = Hmac<Sha256>;
 use crate::{
     integrations::{
         bank::{
-            fetch_banks_via_paystack, retrieve_pending_disbursement,
-            verify_account_via_paystack
+            fetch_banks_via_paystack, retrieve_pending_disbursement, verify_account_via_paystack,
         },
         model::{
             BankVerificationSchema, DisbursementDetails, InitDisbursementResponse,
@@ -76,7 +73,6 @@ fn filtered_transaction_record(transaction: &Transaction) -> FilteredTransaction
     }
 }
 
-
 #[get("/banks")]
 pub async fn fetch_banks_handler(data: web::Data<AppState>) -> impl Responder {
     match fetch_banks_via_flutterwave(&data).await {
@@ -102,7 +98,7 @@ pub async fn init_offramp_transaction(
 ) -> impl Responder {
     let expected_api_key = &app_state.env.hmac_key;
 
-     match req.headers().get("x-api-key") {
+    match req.headers().get("x-api-key") {
         Some(provided_key) => {
             if *provided_key != expected_api_key {
                 return HttpResponse::Unauthorized().json(json!({
@@ -206,7 +202,6 @@ pub async fn init_offramp_transaction(
 
             match get_fiat_amount(&app_state, reference.clone(), request.amount) {
                 Ok(fiat_amount) => {
-
                     return HttpResponse::Ok().json(InitDisbursementResponse {
                         success: true,
                         message: "Payment initialized, please confirm to proceed".to_string(),
@@ -322,7 +317,6 @@ pub async fn confirm_disburse_payment_handler(
     }
 }
 
-
 #[post("/webhooks/flutterwave")]
 pub async fn flutterwave_webhook_handler(
     app_state: web::Data<AppState>,
@@ -377,11 +371,11 @@ pub async fn get_transaction_status_handler(
     req: HttpRequest,
     app_state: web::Data<AppState>,
     path: web::Path<String>,
-    query: web::Query<TransactionStatusQuery>
+    query: web::Query<TransactionStatusQuery>,
 ) -> impl Responder {
     let expected_api_key = &app_state.env.hmac_key;
 
-     match req.headers().get("x-api-key") {
+    match req.headers().get("x-api-key") {
         Some(provided_key) => {
             if *provided_key != expected_api_key {
                 return HttpResponse::Unauthorized().json(json!({
@@ -410,7 +404,6 @@ pub async fn get_transaction_status_handler(
             }));
         }
     };
-
 
     let reference = path.into_inner();
     let user_id = user.id;
@@ -468,7 +461,6 @@ async fn get_usd_ngn_rate_handler(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
-
 #[post("/wallet/controller/create-session")]
 pub async fn create_session_handler(
     req: HttpRequest,
@@ -525,7 +517,7 @@ pub async fn create_session_handler(
     match controller_service.create_controller(&body.phone).await {
         Ok((controller, username, session_options)) => {
             // let raw_controller_address = format!("{:#x}", controller.address);
-            let (_,controller_address) = pad_starknet_address(controller.address).unwrap();
+            let (_, controller_address) = pad_starknet_address(controller.address).unwrap();
             let session_id = Uuid::new_v4().to_string();
 
             let response = CreateSessionResponse {
@@ -552,16 +544,15 @@ pub async fn create_session_handler(
     }
 }
 
-
 #[post("/wallet/controller/receive-payment")]
 pub async fn receive_payment_handler(
     req: HttpRequest,
     app_state: web::Data<AppState>,
     body: web::Json<ReceivePaymentRequest>,
 ) -> impl Responder {
-     let expected_api_key = &app_state.env.hmac_key;
+    let expected_api_key = &app_state.env.hmac_key;
 
-     match req.headers().get("x-api-key") {
+    match req.headers().get("x-api-key") {
         Some(provided_key) => {
             if *provided_key != expected_api_key {
                 return HttpResponse::Unauthorized().json(json!({
@@ -653,24 +644,18 @@ pub async fn receive_payment_handler(
         Err(error) => return error,
     };
 
-    let (controller, _controller_info) = match get_controller(
-        &app_state.db,
-        &controller_service,
-        &user_id,
-        &body.phone,
-    )
-    .await
-    {
-        Ok((controller, detail)) => (controller, detail),
-        Err(e) => {
-            return HttpResponse::NotFound().json(ReceivePaymentResponse {
-                success: false,
-                message: "Controller session not found".to_string(),
-                data: None,
-                error: Some(format!("No active controller session for this user: {}", e)),
-            });
-        }
-    };
+    let (controller, _controller_info) =
+        match get_controller(&app_state.db, &controller_service, &user_id, &body.phone).await {
+            Ok((controller, detail)) => (controller, detail),
+            Err(e) => {
+                return HttpResponse::NotFound().json(ReceivePaymentResponse {
+                    success: false,
+                    message: "Controller session not found".to_string(),
+                    data: None,
+                    error: Some(format!("No active controller session for this user: {}", e)),
+                });
+            }
+        };
 
     log::info!(
         "Processing receive_payment for user: {} (ID: {})",
@@ -711,11 +696,7 @@ pub async fn receive_payment_handler(
             }
         }
         Err(e) => {
-            log::error!(
-                "Payment processing failed for user {}: {}",
-                body.phone,
-                e
-            );
+            log::error!("Payment processing failed for user {}: {}", body.phone, e);
 
             HttpResponse::InternalServerError().json(ReceivePaymentResponse {
                 success: false,
@@ -823,7 +804,14 @@ pub async fn get_controller_balance_handler(
             }))
         }
     }
-    
+}
+
+#[get("/healthz")]
+pub async fn health_check() -> impl Responder {
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "message": "Service is healthy"
+    }))
 }
 
 #[get("/wallet/controller/get-controller")]
@@ -834,7 +822,7 @@ pub async fn get_controller_handler(
 ) -> impl Responder {
     let expected_api_key = &app_state.env.hmac_key;
 
-     match req.headers().get("x-api-key") {
+    match req.headers().get("x-api-key") {
         Some(provided_key) => {
             if *provided_key != *expected_api_key {
                 return HttpResponse::Unauthorized().json(json!({
@@ -850,7 +838,6 @@ pub async fn get_controller_handler(
             }));
         }
     }
-
 
     let user_phone = query.phone.trim().to_string();
 
@@ -875,14 +862,7 @@ pub async fn get_controller_handler(
 
     let controller_service = ControllerService::new(app_state.clone());
 
-    match get_controller(
-        &app_state.db,
-        &controller_service,
-        &user.id,
-        &query.phone,
-    )
-    .await
-    {
+    match get_controller(&app_state.db, &controller_service, &user.id, &query.phone).await {
         Ok((_controller, controller_info)) => HttpResponse::Ok().json(json!({
             "success": "true",
             "message": "Controller retrieved successfully",
@@ -896,11 +876,7 @@ pub async fn get_controller_handler(
             }
         })),
         Err(e) => {
-            log::error!(
-                "Failed to get controller for user {}: {}",
-                query.phone,
-                e
-            );
+            log::error!("Failed to get controller for user {}: {}", query.phone, e);
             HttpResponse::InternalServerError().json(json!({
                 "success": "false",
                 "message": "Failed to retrieve controller",

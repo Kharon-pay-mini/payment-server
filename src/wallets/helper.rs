@@ -111,7 +111,6 @@ pub fn encode_bytearray(input: &str) -> Vec<Felt> {
     result
 }
 
-
 pub fn validate_phone_format(phone: &str) -> Result<(), String> {
     if phone.is_empty() {
         return Err("Phone number cannot be empty".to_string());
@@ -121,13 +120,16 @@ pub fn validate_phone_format(phone: &str) -> Result<(), String> {
         return Err("Phone number too long (max 25 digits)".to_string());
     }
 
-   if !phone.chars().all(|c| c.is_ascii_digit() || "+-() ".contains(c)) {
+    if !phone
+        .chars()
+        .all(|c| c.is_ascii_digit() || "+-() ".contains(c))
+    {
         return Err("Phone number contains invalid characters".to_string());
-   }
+    }
 
-   if !phone.chars().any(|c| c.is_ascii_digit()) {
+    if !phone.chars().any(|c| c.is_ascii_digit()) {
         return Err("Phone number must contain at least one digit".to_string());
-   }
+    }
 
     Ok(())
 }
@@ -571,8 +573,7 @@ pub async fn get_controller(
     user_id: &str,
     phone: &str,
 ) -> Result<(Controller, ControllerSessionInfo), Box<dyn std::error::Error>> {
-    let (user, user_permissions) =
-        controller_service.validate_user_and_get_permissions(phone)?;
+    let (user, user_permissions) = controller_service.validate_user_and_get_permissions(phone)?;
 
     let (controller, username, session_options) = match get_or_create_controller_from_db(
         &database,

@@ -1,7 +1,6 @@
 use crate::{
     database::{
-        transaction_db::TransactionImpl, user_bank_account_db::UserBankImpl,
-        user_db::UserImpl,
+        transaction_db::TransactionImpl, user_bank_account_db::UserBankImpl, user_db::UserImpl,
         user_wallet_db::UserWalletImpl,
     },
     models::models::UserWallet,

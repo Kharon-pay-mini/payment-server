@@ -34,9 +34,9 @@ use crate::{
             build_approve_call, build_payment_call, build_payment_calldata,
             check_account_deployment_status, check_strk_balance, check_token_balance,
             create_failed_response, create_provider_from_url, estimate_transaction_gas,
-            execute_transaction_with_receipt,
-            get_or_create_controller_from_db, parse_felt_from_hex, serialize_u256_type,
-            store_controller_in_db, validate_phone_format, validate_payment_inputs
+            execute_transaction_with_receipt, get_or_create_controller_from_db,
+            parse_felt_from_hex, serialize_u256_type, store_controller_in_db,
+            validate_payment_inputs, validate_phone_format,
         },
         models::{
             ContractMethod, SessionOptions, SessionPolicies, SignMessagePolicy, StarknetDomain,
