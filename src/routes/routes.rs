@@ -814,6 +814,14 @@ pub async fn health_check() -> impl Responder {
     }))
 }
 
+#[get("/")]
+pub async fn health() -> impl Responder {
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "message": "Welcome to the Offramp Service API"
+    }))
+}
+
 #[get("/wallet/controller/get-controller")]
 pub async fn get_controller_handler(
     req: HttpRequest,
